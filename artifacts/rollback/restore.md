@@ -2,27 +2,27 @@
 
 ## Gate status
 
-**Hardware upload is blocked.** The read-only inspection on 2026-09-06 did not
-find either of the two artifacts required to restore the currently deployed
-ESP32 image:
+**Hardware upload is blocked.** A flashable ESP32 factory image is now preserved
+and verified, but the exact deployed device YAML, its secrets-free local
+include graph, the deployed ESPHome version, and the deployed source commit/ref
+remain unavailable. The supplied source ZIP contains the upstream example, not
+proof of the deployed configuration.
 
-1. the exact deployed device YAML, including its secrets-free local include
-   graph; and
-2. a flashable export of the currently deployed ESP32 firmware.
-
-The repository snapshot below is verified evidence, but it is not evidence of
-what is currently deployed. No prototype compile or upload may be treated as
-flash-ready until both missing artifacts are exported without copying
-`secrets.yaml`, added to an external rollback set, and pass that set's manifest
-check.
+The factory image provides a viable binary recovery path. It does not make a
+future prototype build reproducible or prove which configuration produced the
+working deployment. No prototype compile or upload may be treated as
+flash-ready until those missing inputs are exported without copying
+`secrets.yaml`, added to the durable rollback set, and pass its manifest check.
 
 ## Verified repository baseline
 
 - Repository commit: `b0e07d832c495a8fdd334f0cb3717296d78b1132`
 - Repository branch at capture: `feature/realtime-talk-bridge`
 - Repository manifest: `artifacts/rollback/manifest.sha256`
-- External repository-only snapshot:
-  `/root/.openclaw/workspace/tmp/respeaker-openclaw-talk-rollback/20260906T225648Z`
+- Durable private backup:
+  `/mnt/user/Array/Backup/AgentBackup/reSpeaker/OpenClaw-Talk/2026-09-06/`
+- Committed verification manifest for that backup:
+  `artifacts/rollback/durable-backup.sha256`
 - ESPHome project/minimum version declared by `packages/base.yaml`: `2026.6.0`
 - Actual ESPHome version used by the deployed build: **unknown**
 - Actual repository commit/ref used by the deployed build: **unknown**
@@ -33,15 +33,39 @@ Verify the committed public baseline from the repository root:
 sha256sum --check artifacts/rollback/manifest.sha256
 ```
 
-Verify the external repository-only snapshot:
+Verify the durable private backup on Unraid through the approved management
+route:
 
 ```bash
-cd /root/.openclaw/workspace/tmp/respeaker-openclaw-talk-rollback/20260906T225648Z
-sha256sum --check manifest.sha256
+ssh -i /root/.openclaw/keys/eve-unraid-management root@192.168.3.100 \
+  'cd /mnt/user/Array/Backup/AgentBackup/reSpeaker/OpenClaw-Talk/2026-09-06 && sha256sum --check backup.sha256'
 ```
 
-The external set contains only public repository inputs and provenance. It does
-not contain Wi-Fi, API, OTA, or bridge credentials.
+The durable set contains the factory image, upstream source ZIP, supplied
+23-file source manifest, provenance record, and `backup.sha256`. It contains no
+Wi-Fi, Home Assistant API, OTA, bridge, or OpenClaw Gateway credentials.
+
+## Verified ESP32 factory image
+
+The private binary
+`respeaker-xvf3800-assistant-firmware.factory.bin` is 3,192,496 bytes with
+SHA-256:
+
+```text
+1dc03d21528e56bea183def108585e7654c32544f5b369036631e8a9dd7fcd30
+```
+
+Read-only parsing established that it is a merged ESP32 factory image:
+
+- valid ESP image at offset `0x0`;
+- partition-table magic at `0x8000` with five entries;
+- first declared app partition at `0x10000`; and
+- a valid six-segment ESP application image at `0x10000` ending within the
+  supplied binary.
+
+These observations establish the image type; they are not instructions to
+guess or manually supply flash offsets. Use ESPHome Web's factory-image flow
+below.
 
 ## Fixed DSP baseline
 
@@ -65,8 +89,6 @@ outside Git. Preserve:
 
 - the deployed top-level YAML;
 - every local secrets-free YAML/package it includes;
-- the flashable ESP32 binary (and its type/offset or the complete ESPHome build
-  directory needed to upload it);
 - the exact ESPHome version; and
 - the exact repository commit/ref used by that build.
 
@@ -85,22 +107,25 @@ self-verifying checksum. The exclusion above is required.
 
 ## Restore procedure
 
-1. Stop. Verify the complete deployed rollback set with `sha256sum --check`.
+1. Stop. Verify the durable rollback set with `sha256sum --check backup.sha256`.
    A missing file or non-zero result forbids the upload.
-2. Confirm the preserved binary type and upload method recorded at capture.
-   Do not infer a flash offset from the filename.
-3. Connect by the same transport recorded at capture (USB serial is preferred
-   for recovery). Do not use an OTA command unless the preserved artifact was
-   explicitly captured as an OTA image.
-4. Run the exact upload command recorded with the exported build. **No exact
-   safe command can be supplied yet**, because the deployed YAML, ESPHome build
-   metadata, binary type, device address/serial path, and flash layout were not
-   available through a read-only route.
-5. After restore, validate all of the following before declaring recovery:
+2. Copy only the verified factory binary from the private backup to the local
+   computer performing the restore. Keep it outside Git.
+3. Connect the XIAO ESP32-S3 directly over USB to a Chromium browser that
+   supports Web Serial and open <https://web.esphome.io/>.
+4. Select **Connect**, choose the board's serial port, select **Install**, then
+   choose the verified
+   `respeaker-xvf3800-assistant-firmware.factory.bin` file and confirm the
+   installation. This ESPHome Web factory-image flow handles the merged image;
+   do not enter a manual offset or use the XMOS DSP binary.
+5. Wait for ESPHome Web to report completion before disconnecting or resetting
+   the board. If ESPHome Web cannot connect or rejects the image, stop; do not
+   substitute an unreviewed command or offset.
+6. After restore, validate all of the following before declaring recovery:
    device boot without a crash loop; Home Assistant API connection; local wake
    word and `Stop`; microphone mute; XVF3800 version `1.0.7`; speaker output;
    LED states; ordinary Home Assistant voice request/response; and a second
    manifest check proving the source artifacts were unchanged.
 
-Until the missing exports and exact upload command are recorded, the only safe
-rollback action is **do not flash the prototype**.
+The binary restore method is established, but until the exact deployed YAML and
+build provenance are captured, the prototype flash gate remains closed.

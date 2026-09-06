@@ -10,8 +10,8 @@ No prototype firmware may be uploaded until all of these conditions are true:
 
 - the exact currently deployed top-level YAML and its complete secrets-free
   local package graph have been exported outside Git;
-- a flashable export of the currently deployed ESP32 firmware has been
-  exported outside Git;
+- the preserved factory image remains present in the durable private backup and
+  passes its SHA-256 manifest check;
 - the ESPHome version and source repository commit/ref used for the deployed
   build are recorded;
 - every exported file passes the external SHA-256 manifest check; and
@@ -20,7 +20,9 @@ No prototype firmware may be uploaded until all of these conditions are true:
 
 `secrets.yaml`, API keys, OTA passwords, Wi-Fi credentials, Gateway tokens, and
 bridge credentials must never be copied into the repository or checksum
-documentation.
+documentation. The ESP32 receives only its device-specific bridge credential;
+the OpenClaw Gateway credential remains protected on the host-side bridge and
+must never be placed on the ESP32.
 
 The initial read-only capture is incomplete. See
 [`artifacts/rollback/restore.md`](../artifacts/rollback/restore.md) for verified
@@ -31,9 +33,8 @@ currently **closed**.
 
 The prototype must preserve the board-fixed I2C/I2S pins, XVF3800 microphone
 input, AIC3104-backed speaker chain, mute behavior, wake/`Stop` models, and LED
-control. `packages/hardware.yaml` must remain on the known-compatible XVF3800
-internal-host DSP firmware `1.0.7` unless a separately reviewed hardware task
-changes the baseline.
+control. The board-fixed pins and `packages/hardware.yaml` XVF3800 internal-host
+DSP firmware `1.0.7` are immutable constraints for this project.
 
 ## Recovery acceptance checks
 
