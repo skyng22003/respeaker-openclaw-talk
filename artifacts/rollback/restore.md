@@ -2,20 +2,21 @@
 
 ## Gate status
 
-**Hardware upload is blocked.** A flashable ESP32 factory image and Sky-attested
-top-level deployed YAML are now preserved and verified. Its five remote package
+**Rollback baseline ready for re-review.** A flashable ESP32 factory image and
+Sky-attested top-level deployed YAML are preserved and verified. Its five remote package
 files byte-match the supplied source ZIP and this checkout at
 `b0e07d832c495a8fdd334f0cb3717296d78b1132`. The YAML selected mutable ref
 `main`, however, so this byte match does not prove which historical commit
-Device Builder fetched. The underlying deployed ESPHome core version also
-remains unknown.
+Device Builder fetched. Embedded factory-image metadata establishes that the
+deployed image uses ESPHome core `2026.8.2`.
 
-The factory image provides a viable binary recovery path. It does not make a
-future prototype build reproducible or prove which configuration produced the
-working deployment. No prototype compile or upload may be treated as
-flash-ready until the remaining provenance is established or explicitly
-accepted as unknowable by the project owner. No secret-bearing configuration is
-part of this baseline.
+The merged factory image provides byte-for-byte recovery through the documented
+CLI or GUI procedure. The attested YAML and exact package bytes provide an
+immutable configuration baseline even though historical remote commit identity
+behind mutable `main` is unprovable. This satisfies the practical Task 1
+rollback contract and is ready for re-review; it does not authorize a prototype
+flash, which still requires explicit review/approval. No secret-bearing
+configuration is part of this baseline.
 
 ## Verified repository baseline
 
@@ -28,10 +29,13 @@ part of this baseline.
   `artifacts/rollback/durable-backup.sha256`
 - Sky-attested YAML supplement manifest:
   `artifacts/rollback/durable-backup-fix-round-2.sha256`
+- Factory metadata evidence manifest:
+  `artifacts/rollback/durable-backup-fix-round-3.sha256`
 - ESPHome project/minimum version declared by `packages/base.yaml`: `2026.6.0`
 - Home Assistant Device Builder add-on version: `1.13.1` (this is **not** proof
   of the underlying ESPHome core version)
-- Actual ESPHome core version used by the deployed build: **unknown**
+- ESPHome core version embedded in the deployed factory image: `2026.8.2`
+- Project/component version embedded in the image: `2026.6.0`
 - Configured repository ref: `main` (mutable; exact historical commit unknown)
 
 Verify the committed public baseline from the repository root:
@@ -68,6 +72,23 @@ ref `main`, refresh `1d`, and `base`, `hardware`, `voice-assistant`, `leds`, and
 checkout's baseline bytes and hashes. This establishes a preserved,
 attested configuration byte set; it does not convert mutable `main` into proof
 of the commit historically fetched by Device Builder.
+
+The non-destructive Fix Round 3 supplement adds
+`factory-metadata-evidence.txt` and `backup-fix-round-3.sha256`. The evidence is
+bound to the factory image's SHA-256 and contains only allowlisted printable
+version/device identity strings—no raw binary contents, credentials, network
+values, or unrelated strings. It records:
+
+```text
+ESPHome version 2026.8.2 compiled on %s
+Project formatbce.Respeaker XVF3800 Satellite version 2026.6.0
+respeaker-xvf3800-assistant
+reSpeaker XVF3800 Assistant
+```
+
+Therefore `2026.8.2` is the deployed ESPHome core version, `2026.6.0` is the
+project/component version, and `1.13.1` is only the Home Assistant Device
+Builder add-on version.
 
 ## Verified ESP32 factory image
 
@@ -106,13 +127,13 @@ Size    888832 bytes
 This is the XMOS DSP image embedded by the ESPHome component. It is **not** a
 flashable ESP32 rollback image.
 
-## Remaining provenance before any prototype upload
+## Historical provenance caveat
 
 If a read-only/non-secret source becomes available, preserve the exact
-underlying ESPHome core version used by Device Builder and the exact historical
-repository commit resolved from mutable ref `main`. Do not copy `secrets.yaml`.
-The factory image and Sky-attested configuration byte set remain independently
-usable for rollback even if this historical provenance cannot be recovered.
+historical repository commit resolved from mutable ref `main`. Do not copy
+`secrets.yaml`. The missing remote commit identity does not prevent rollback:
+the factory image, embedded core version, attested top-level YAML, and exact
+package bytes/hashes are independently preserved and immutable.
 
 ## Restore procedure
 
@@ -153,5 +174,6 @@ Run it only from a directory containing the verified private factory binary.
 Do not add offsets, split the image, use the XMOS DSP binary, or substitute an
 OTA image. ESPHome Web remains the safer GUI alternative.
 
-Byte-for-byte firmware rollback is now available, but the prototype flash gate
-remains closed because exact historical core/source provenance is not proven.
+Byte-for-byte firmware rollback is available. Task 1 is ready for re-review;
+prototype flashing remains prohibited until the next task's explicit safety
+review and approval.

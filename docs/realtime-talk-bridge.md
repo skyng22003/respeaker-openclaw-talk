@@ -12,8 +12,7 @@ No prototype firmware may be uploaded until all of these conditions are true:
   package bytes remain preserved in the durable private backup;
 - the preserved factory image remains present in the durable private backup and
   passes its SHA-256 manifest check;
-- the underlying ESPHome core version and historical source commit used for the
-  deployed build are recorded or explicitly accepted as unknowable by Sky;
+- the embedded ESPHome core version and exact package bytes/hashes are recorded;
 - every exported file passes the external SHA-256 manifest check; and
 - an exact restore command appropriate to the captured binary type and device
   transport is recorded and reviewed.
@@ -24,10 +23,10 @@ documentation. The ESP32 receives only its device-specific bridge credential;
 the OpenClaw Gateway credential remains protected on the host-side bridge and
 must never be placed on the ESP32.
 
-The initial read-only capture is incomplete. See
+The practical rollback baseline is complete and ready for re-review. See
 [`artifacts/rollback/restore.md`](../artifacts/rollback/restore.md) for verified
-repository evidence and the precise blockers. This means the firmware gate is
-currently **closed**.
+repository evidence, exact restore methods, and the historical mutable-`main`
+commit caveat. This documentation does not itself authorize firmware upload.
 
 ## Hardware invariants
 
