@@ -8,12 +8,12 @@ target. It does not require or permit an OpenClaw update.
 
 No prototype firmware may be uploaded until all of these conditions are true:
 
-- the exact currently deployed top-level YAML and its complete secrets-free
-  local package graph have been exported outside Git;
+- the Sky-attested deployed top-level YAML and its matching secrets-free remote
+  package bytes remain preserved in the durable private backup;
 - the preserved factory image remains present in the durable private backup and
   passes its SHA-256 manifest check;
-- the ESPHome version and source repository commit/ref used for the deployed
-  build are recorded;
+- the underlying ESPHome core version and historical source commit used for the
+  deployed build are recorded or explicitly accepted as unknowable by Sky;
 - every exported file passes the external SHA-256 manifest check; and
 - an exact restore command appropriate to the captured binary type and device
   transport is recorded and reviewed.

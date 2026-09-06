@@ -2,17 +2,20 @@
 
 ## Gate status
 
-**Hardware upload is blocked.** A flashable ESP32 factory image is now preserved
-and verified, but the exact deployed device YAML, its secrets-free local
-include graph, the deployed ESPHome version, and the deployed source commit/ref
-remain unavailable. The supplied source ZIP contains the upstream example, not
-proof of the deployed configuration.
+**Hardware upload is blocked.** A flashable ESP32 factory image and Sky-attested
+top-level deployed YAML are now preserved and verified. Its five remote package
+files byte-match the supplied source ZIP and this checkout at
+`b0e07d832c495a8fdd334f0cb3717296d78b1132`. The YAML selected mutable ref
+`main`, however, so this byte match does not prove which historical commit
+Device Builder fetched. The underlying deployed ESPHome core version also
+remains unknown.
 
 The factory image provides a viable binary recovery path. It does not make a
 future prototype build reproducible or prove which configuration produced the
 working deployment. No prototype compile or upload may be treated as
-flash-ready until those missing inputs are exported without copying
-`secrets.yaml`, added to the durable rollback set, and pass its manifest check.
+flash-ready until the remaining provenance is established or explicitly
+accepted as unknowable by the project owner. No secret-bearing configuration is
+part of this baseline.
 
 ## Verified repository baseline
 
@@ -23,9 +26,13 @@ flash-ready until those missing inputs are exported without copying
   `/mnt/user/Array/Backup/AgentBackup/reSpeaker/OpenClaw-Talk/2026-09-06/`
 - Committed verification manifest for that backup:
   `artifacts/rollback/durable-backup.sha256`
+- Sky-attested YAML supplement manifest:
+  `artifacts/rollback/durable-backup-fix-round-2.sha256`
 - ESPHome project/minimum version declared by `packages/base.yaml`: `2026.6.0`
-- Actual ESPHome version used by the deployed build: **unknown**
-- Actual repository commit/ref used by the deployed build: **unknown**
+- Home Assistant Device Builder add-on version: `1.13.1` (this is **not** proof
+  of the underlying ESPHome core version)
+- Actual ESPHome core version used by the deployed build: **unknown**
+- Configured repository ref: `main` (mutable; exact historical commit unknown)
 
 Verify the committed public baseline from the repository root:
 
@@ -44,6 +51,23 @@ ssh -i /root/.openclaw/keys/eve-unraid-management root@192.168.3.100 \
 The durable set contains the factory image, upstream source ZIP, supplied
 23-file source manifest, provenance record, and `backup.sha256`. It contains no
 Wi-Fi, Home Assistant API, OTA, bridge, or OpenClaw Gateway credentials.
+
+The non-destructive Fix Round 2 supplement adds:
+
+- `deployed-respeaker-xvf-satellite-example.yaml` — 1,494 bytes, 47 lines,
+  SHA-256
+  `0f4c0d4403ea367628e4568b539eda0deb80070cf0120e7d0c583e2b2535d990`;
+- `provenance-fix-round-2.txt`; and
+- `backup-fix-round-2.sha256`.
+
+Sky attests that this is the top-level YAML used for the deployed device. It
+exactly matches the YAML in the supplied ZIP and checkout. Its remote package
+graph selects the `formatBCE/Respeaker-XVF3800-ESPHome-integration` repository,
+ref `main`, refresh `1d`, and `base`, `hardware`, `voice-assistant`, `leds`, and
+`timers-alarm` packages. All five supplied package files exactly match this
+checkout's baseline bytes and hashes. This establishes a preserved,
+attested configuration byte set; it does not convert mutable `main` into proof
+of the commit historically fetched by Device Builder.
 
 ## Verified ESP32 factory image
 
@@ -82,28 +106,13 @@ Size    888832 bytes
 This is the XMOS DSP image embedded by the ESPHome component. It is **not** a
 flashable ESP32 rollback image.
 
-## Required capture before any prototype upload
+## Remaining provenance before any prototype upload
 
-Use a read-only/non-secret export route to create a new timestamped directory
-outside Git. Preserve:
-
-- the deployed top-level YAML;
-- every local secrets-free YAML/package it includes;
-- the exact ESPHome version; and
-- the exact repository commit/ref used by that build.
-
-Do not copy `secrets.yaml`. Build the manifest without hashing the manifest
-itself, then verify it:
-
-```bash
-find "$ROLLBACK_DIR" -type f ! -name manifest.sha256 -print0 \
-  | sort -z | xargs -0 sha256sum > "$ROLLBACK_DIR/manifest.sha256"
-(cd "$ROLLBACK_DIR" && sha256sum --check manifest.sha256)
-```
-
-The brief's unfiltered `find "$ROLLBACK_DIR" -type f ...` form includes the
-redirect-created manifest in its own input and therefore cannot produce a
-self-verifying checksum. The exclusion above is required.
+If a read-only/non-secret source becomes available, preserve the exact
+underlying ESPHome core version used by Device Builder and the exact historical
+repository commit resolved from mutable ref `main`. Do not copy `secrets.yaml`.
+The factory image and Sky-attested configuration byte set remain independently
+usable for rollback even if this historical provenance cannot be recovered.
 
 ## Restore procedure
 
@@ -127,5 +136,22 @@ self-verifying checksum. The exclusion above is required.
    LED states; ordinary Home Assistant voice request/response; and a second
    manifest check proving the source artifacts were unchanged.
 
-The binary restore method is established, but until the exact deployed YAML and
-build provenance are captured, the prototype flash gate remains closed.
+### Exact esptool alternative
+
+Espressif's official ESP32-S3 esptool documentation defines `write-flash` as
+offset/file pairs and says `--chip` is optional because the chip is detected.
+For this structurally verified merged factory image, the complete image starts
+at offset `0x0`. After verifying the private backup and replacing only the
+serial-port placeholder, the exact command is:
+
+```bash
+esptool --chip esp32s3 --port <SERIAL_PORT> write-flash 0x0 \
+  respeaker-xvf3800-assistant-firmware.factory.bin
+```
+
+Run it only from a directory containing the verified private factory binary.
+Do not add offsets, split the image, use the XMOS DSP binary, or substitute an
+OTA image. ESPHome Web remains the safer GUI alternative.
+
+Byte-for-byte firmware rollback is now available, but the prototype flash gate
+remains closed because exact historical core/source provenance is not proven.
