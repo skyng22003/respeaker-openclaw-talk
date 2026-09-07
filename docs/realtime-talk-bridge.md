@@ -37,8 +37,9 @@ DSP firmware `1.0.7` are immutable constraints for this project.
 
 ## Task 3 software-only verification
 
-The pure raw-I2S conversion, actual pinned-fork callback resampling, framing,
-stale-first queue, lifecycle ordering, reconnect, and credential-redaction checks are in
+The pure raw-I2S conversion, timestamp/rational correction for the pinned fork's
+per-read selector loss, framing, stale-first queue, production lifecycle fences,
+fragmented controls, reconnect, and credential-redaction checks are in
 `esphome/components/respeaker_realtime/test/`. On a host with a C++17 compiler,
 run the authoritative native test with:
 

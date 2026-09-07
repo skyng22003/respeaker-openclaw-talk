@@ -32,23 +32,6 @@ def stereo(*pairs):
     return b"".join(struct.pack("<ii", left, right) for left, right in pairs)
 
 
-def reference_callback_resample(samples):
-    output = []
-    previous = None
-    two_outputs = False
-    for current in samples:
-        if previous is None:
-            output.append(current)
-        elif two_outputs:
-            output.extend(((previous * 2 + current) // 3, current))
-        else:
-            output.append((previous + current * 2) // 3)
-        if previous is not None:
-            two_outputs = not two_outputs
-        previous = current
-    return output
-
-
 class AudioVectors(unittest.TestCase):
     def test_silence_cadence_and_frame_size(self):
         output, phase = reference_convert(bytes(960 * 8))
@@ -75,8 +58,13 @@ class AudioVectors(unittest.TestCase):
         self.assertEqual(first_out + second_out, [0, 2, 4])
         self.assertEqual(phase, 0)
 
-    def test_actual_16k_callback_is_resampled_to_24k(self):
-        self.assertEqual(reference_callback_resample([0, 3, 6]), [0, 2, 4, 6])
+    def test_one_second_raw_cadence_is_exact_across_callbacks(self):
+        spans = [256] * 187 + [128]
+        phase = total = 0
+        for span in spans:
+            total += (phase + span) // 2
+            phase = (phase + span) % 2
+        self.assertEqual((sum(spans), total, phase), (48000, 24000, 0))
 
 
 class QueueAndLifecycleVectors(unittest.TestCase):
@@ -106,14 +94,14 @@ class SourceContracts(unittest.TestCase):
         self.assertIn("this->head_ = (this->head_ + 1) % Capacity", HEADER)
         self.assertIn("this->dropped_++", HEADER)
         self.assertIn("this->stale_cleared_ += this->size_", HEADER)
-        self.assertIn("class MicrophoneCallbackConverter", HEADER)
-        self.assertIn("callback contract consumed by this", HEADER)
+        self.assertIn("class RawCadenceConverter", HEADER)
+        self.assertIn("class ProductionSessionState", HEADER)
 
     def test_hello_gates_audio_and_reconnect_is_bounded(self):
         connected_case = SOURCE[SOURCE.index("case WEBSOCKET_EVENT_CONNECTED:") :]
-        self.assertIn("if (!this->send_hello_())", connected_case)
+        self.assertIn("!this->send_hello_()", connected_case)
         self.assertIn("this->hello_sent_.load()", SOURCE)
-        self.assertIn("if (!this->ready_.load())", SOURCE)
+        self.assertIn("if (!this->session_state_.ready())", SOURCE)
         self.assertIn("MAX_RECONNECT_ATTEMPTS", SOURCE)
         self.assertIn("std::min<uint32_t>(250U << shift, 4000U)", SOURCE)
         self.assertIn("pdMS_TO_TICKS(5000)", SOURCE)

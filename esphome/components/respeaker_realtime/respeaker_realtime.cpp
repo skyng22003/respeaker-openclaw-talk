@@ -8,6 +8,7 @@
 
 #include <cJSON.h>
 #include <esp_crt_bundle.h>
+#include <esp_timer.h>
 
 namespace esphome::respeaker_realtime {
 
@@ -63,11 +64,10 @@ void RespeakerRealtime::start_session(const std::string &wake_word) {
   if (!this->session_requested_.compare_exchange_strong(expected, true))
     return;
 
-  this->ready_.store(false);
+  this->session_state_.start();
   this->connected_.store(false);
   this->hello_sent_.store(false);
   this->reconnect_needed_.store(false);
-  this->generation_.fetch_add(1);
   this->clear_uplink_queue_();
   this->microphone_->start();
 }
@@ -76,7 +76,9 @@ void RespeakerRealtime::stop_session(StopReason reason) {
   if (!this->session_requested_.exchange(false))
     return;
   this->stop_reason_.store(reason);
-  this->ready_.store(false);
+  this->session_state_.lock_send_fence();
+  this->session_state_.stop();
+  this->session_state_.unlock_send_fence();
   this->hello_sent_.store(false);
   this->clear_uplink_queue_();
   this->microphone_->stop();
@@ -106,6 +108,13 @@ void RespeakerRealtime::transport_task_() {
       continue;
     }
 
+    if (this->websocket_ != nullptr &&
+        this->session_state_.needs_reopen(this->opened_transport_epoch_.load())) {
+      this->close_transport_();
+      this->clear_uplink_queue_();
+      handshake_pending = false;
+    }
+
     if (this->reconnect_needed_.exchange(false)) {
       this->close_transport_();
       this->clear_uplink_queue_();
@@ -131,13 +140,14 @@ void RespeakerRealtime::transport_task_() {
         attempts++;
         this->reconnect_count_.fetch_add(1);
       } else {
+        this->opened_transport_epoch_.store(this->session_state_.transport_epoch());
         handshake_started_at = xTaskGetTickCount();
         handshake_pending = true;
       }
       continue;
     }
 
-    if (!this->ready_.load()) {
+    if (!this->session_state_.ready()) {
       if (handshake_pending && xTaskGetTickCount() - handshake_started_at >= pdMS_TO_TICKS(5000)) {
         this->reconnect_needed_.store(true);
         handshake_pending = false;
@@ -152,13 +162,25 @@ void RespeakerRealtime::transport_task_() {
       vTaskDelay(pdMS_TO_TICKS(2));
       continue;
     }
-    const int written = esp_websocket_client_send_bin(this->websocket_, reinterpret_cast<const char *>(frame.bytes.data()),
-                                                       frame.bytes.size(), pdMS_TO_TICKS(40));
+    const SessionToken send_token = this->session_state_.capture_send_token();
+    if (!this->session_requested_.load() || !this->session_state_.may_send(send_token) || this->websocket_ == nullptr) {
+      this->stale_frames_.fetch_add(1);
+      continue;
+    }
+    int written = -1;
+    if (!this->session_state_.run_if_current(send_token, [&]() {
+          written = esp_websocket_client_send_bin(this->websocket_,
+                                                   reinterpret_cast<const char *>(frame.bytes.data()),
+                                                   frame.bytes.size(), pdMS_TO_TICKS(40));
+        })) {
+      this->stale_frames_.fetch_add(1);
+      continue;
+    }
     if (written == static_cast<int>(frame.bytes.size())) {
       this->sent_frames_.fetch_add(1);
     } else {
       this->dropped_frames_.fetch_add(1);
-      this->ready_.store(false);
+      this->session_state_.advance_audio_epoch();
       this->reconnect_needed_.store(true);
     }
   }
@@ -189,12 +211,10 @@ bool RespeakerRealtime::open_transport_() {
 }
 
 void RespeakerRealtime::close_transport_() {
-  this->ready_.store(false);
+  this->session_state_.on_disconnected();
   this->hello_sent_.store(false);
   this->connected_.store(false);
-  this->text_message_length_ = 0;
-  this->text_frame_base_ = 0;
-  this->text_message_in_progress_ = false;
+  this->text_assembler_.reset();
   if (this->websocket_ == nullptr)
     return;
   esp_websocket_client_stop(this->websocket_);
@@ -217,13 +237,13 @@ void RespeakerRealtime::handle_websocket_event_(esp_websocket_event_id_t event_i
     case WEBSOCKET_EVENT_CONNECTED:
       this->connected_.store(true);
       this->reconnect_needed_.store(false);
-      if (!this->send_hello_())
+      if (!this->session_state_.on_open(this->session_state_.current_session_token()) || !this->send_hello_())
         this->reconnect_needed_.store(true);
       break;
     case WEBSOCKET_EVENT_DISCONNECTED:
     case WEBSOCKET_EVENT_CLOSED:
     case WEBSOCKET_EVENT_ERROR:
-      this->ready_.store(false);
+      this->session_state_.on_disconnected();
       this->connected_.store(false);
       this->hello_sent_.store(false);
       if (this->session_requested_.load())
@@ -232,34 +252,10 @@ void RespeakerRealtime::handle_websocket_event_(esp_websocket_event_id_t event_i
     case WEBSOCKET_EVENT_DATA:
       if (event_data == nullptr || event_data->data_len < 0 || event_data->payload_offset < 0)
         break;
-      if (event_data->op_code == 0x01 && event_data->payload_offset == 0) {
-        this->text_message_length_ = 0;
-        this->text_frame_base_ = 0;
-        this->text_message_in_progress_ = true;
-      } else if (event_data->op_code == 0x00 && event_data->payload_offset == 0 &&
-                 this->text_message_in_progress_) {
-        this->text_frame_base_ = this->text_message_length_;
-      } else if (event_data->op_code != 0x01 && event_data->op_code != 0x00) {
-        break;
-      }
-      if (!this->text_message_in_progress_ ||
-          this->text_frame_base_ + static_cast<size_t>(event_data->payload_offset) != this->text_message_length_ ||
-          this->text_message_length_ + static_cast<size_t>(event_data->data_len) >= this->text_message_.size()) {
-        this->text_message_length_ = 0;
-        this->text_frame_base_ = 0;
-        this->text_message_in_progress_ = false;
-        break;
-      }
-      std::memcpy(this->text_message_.data() + this->text_message_length_, event_data->data_ptr,
-                  static_cast<size_t>(event_data->data_len));
-      this->text_message_length_ += static_cast<size_t>(event_data->data_len);
-      if (event_data->fin) {
-        this->text_message_[this->text_message_length_] = '\0';
-        this->handle_text_message_(this->text_message_.data(), this->text_message_length_);
-        this->text_message_length_ = 0;
-        this->text_frame_base_ = 0;
-        this->text_message_in_progress_ = false;
-      }
+      if (this->text_assembler_.append(event_data->op_code, event_data->fin, event_data->payload_offset,
+                                       event_data->data_ptr, static_cast<size_t>(event_data->data_len)) ==
+          FragmentedTextAssembler::Result::COMPLETE)
+        this->handle_text_message_(this->text_assembler_.data(), this->text_assembler_.size());
       break;
     default:
       break;
@@ -275,7 +271,7 @@ bool RespeakerRealtime::send_hello_() {
       "{\"type\":\"hello\",\"version\":1,\"generation\":%u,\"deviceId\":\"%s\",\"credential\":\"%s\","
       "\"sampleRate\":24000,\"channels\":1,\"sampleFormat\":\"s16le\",\"frameMs\":20,"
       "\"idleTimeoutSeconds\":%u,\"firmware\":\"respeaker-realtime-task3\"}",
-      this->generation_.load(), this->device_id_.c_str(), this->credential_.c_str(),
+      this->session_state_.generation(), this->device_id_.c_str(), this->credential_.c_str(),
       static_cast<unsigned>(this->idle_timeout_seconds_));
   if (length <= 0 || static_cast<size_t>(length) >= hello.size())
     return false;
@@ -283,6 +279,7 @@ bool RespeakerRealtime::send_hello_() {
   if (written != length)
     return false;
   this->hello_sent_.store(true);
+  this->session_state_.on_hello(this->session_state_.current_session_token());
   return true;
 }
 
@@ -292,7 +289,7 @@ bool RespeakerRealtime::send_control_(const char *type) {
   std::array<char, 128> message{};
   const int length = std::snprintf(message.data(), message.size(),
                                    "{\"type\":\"%s\",\"version\":1,\"generation\":%u}", type,
-                                   this->generation_.load());
+                                   this->session_state_.generation());
   if (length <= 0 || static_cast<size_t>(length) >= message.size())
     return false;
   return esp_websocket_client_send_text(this->websocket_, message.data(), length, pdMS_TO_TICKS(100)) == length;
@@ -311,13 +308,15 @@ void RespeakerRealtime::handle_text_message_(const char *data, size_t length) {
       (message_generation = static_cast<uint32_t>(generation->valuedouble),
        static_cast<double>(message_generation) == generation->valuedouble);
   const bool current = cJSON_IsString(type) && cJSON_IsNumber(version) && version->valuedouble == 1.0 &&
-                       valid_generation && message_generation == this->generation_.load();
+                       valid_generation && message_generation == this->session_state_.generation();
   if (current && std::strcmp(type->valuestring, "ready") == 0 && this->connected_.load() &&
       this->hello_sent_.load() && this->session_requested_.load()) {
     this->clear_uplink_queue_();
-    this->audio_epoch_.fetch_add(1);
+    if (!this->session_state_.on_ready(this->session_state_.current_session_token())) {
+      cJSON_Delete(root);
+      return;
+    }
     this->retry_reset_requested_.store(true);
-    this->ready_.store(true);
   } else if (current && std::strcmp(type->valuestring, "ping") == 0) {
     this->send_control_("pong");
   } else if (current && (std::strcmp(type->valuestring, "error") == 0 ||
@@ -328,50 +327,37 @@ void RespeakerRealtime::handle_text_message_(const char *data, size_t length) {
 }
 
 void RespeakerRealtime::handle_microphone_data_(const std::vector<uint8_t> &data) {
-  const uint32_t generation = this->generation_.load();
-  const uint32_t audio_epoch = this->audio_epoch_.load();
-  if (!this->ready_.load()) {
+  const SessionToken callback_token = this->session_state_.capture_audio_token();
+  if (!callback_token.valid) {
     this->ignored_before_ready_.fetch_add(1);
     return;
   }
 
-  if (audio_epoch != this->processed_audio_epoch_) {
+  if (callback_token.audio_epoch != this->processed_audio_epoch_) {
     this->converter_.reset();
+    this->raw_clock_.reset();
     this->assembler_.clear();
-    this->input_tail_size_ = 0;
-    this->processed_audio_epoch_ = audio_epoch;
+    this->processed_audio_epoch_ = callback_token.audio_epoch;
   }
-  this->processing_generation_ = generation;
+  this->processing_token_ = callback_token;
 
-  size_t offset = 0;
-  if (this->input_tail_size_ != 0) {
-    const size_t needed = INPUT_FRAME_BYTES - this->input_tail_size_;
-    const size_t copied = std::min(needed, data.size());
-    std::memcpy(this->input_tail_.data() + this->input_tail_size_, data.data(), copied);
-    this->input_tail_size_ += copied;
-    offset += copied;
-    if (this->input_tail_size_ == INPUT_FRAME_BYTES) {
-      this->handle_input_frame_(this->input_tail_.data());
-      this->input_tail_size_ = 0;
-    }
-  }
+  // The fork discards each raw-read remainder, so callback byte count alone
+  // cannot recover capture duration. Carry microsecond time at the raw 48 kHz
+  // rate; the first known full callback represents its 256-frame I2S read.
+  const int64_t now_us = esp_timer_get_time();
+  size_t raw_frames_elapsed = this->raw_clock_.advance(static_cast<uint64_t>(now_us));
+  if (raw_frames_elapsed == 0)
+    raw_frames_elapsed = 256;
+  raw_frames_elapsed = std::min<size_t>(raw_frames_elapsed, 512);
 
-  while (offset + INPUT_FRAME_BYTES <= data.size()) {
-    this->handle_input_frame_(data.data() + offset);
-    offset += INPUT_FRAME_BYTES;
-  }
-  if (offset < data.size()) {
-    this->input_tail_size_ = data.size() - offset;
-    std::memcpy(this->input_tail_.data(), data.data() + offset, this->input_tail_size_);
-  }
-}
-
-void RespeakerRealtime::handle_input_frame_(const uint8_t *frame) {
-  int16_t samples[2]{};
-  const size_t sample_count = this->converter_.convert_frame(frame, samples);
-  this->assembler_.append(samples, sample_count, [this](const AudioFrame &audio_frame) {
-    if (!this->ready_.load() || this->processing_generation_ != this->generation_.load())
+  std::array<int16_t, 256> converted{};
+  const size_t sample_count = this->converter_.convert(data.data(), data.size(), raw_frames_elapsed, converted.data(),
+                                                       converted.size());
+  this->assembler_.append(converted.data(), sample_count, [this](const AudioFrame &audio_frame) {
+    if (!this->session_state_.may_emit(this->processing_token_)) {
+      this->stale_frames_.fetch_add(1);
       return;
+    }
     portENTER_CRITICAL(&this->queue_mux_);
     const bool dropped = this->uplink_queue_.push(audio_frame);
     portEXIT_CRITICAL(&this->queue_mux_);
@@ -397,7 +383,7 @@ void RespeakerRealtime::clear_uplink_queue_() {
 
 void RespeakerRealtime::fail_session_(const char *safe_code) {
   ESP_LOGW(TAG, "Realtime session ended: %s", safe_code);
-  this->ready_.store(false);
+  this->session_state_.stop();
   this->session_requested_.store(false);
   this->clear_uplink_queue_();
   this->microphone_->stop();

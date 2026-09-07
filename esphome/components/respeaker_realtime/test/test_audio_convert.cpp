@@ -9,10 +9,12 @@
 #include <vector>
 
 using esphome::respeaker_realtime::AudioFrame;
+using esphome::respeaker_realtime::FragmentedTextAssembler;
 using esphome::respeaker_realtime::AudioStreamConverter;
-using esphome::respeaker_realtime::MicrophoneCallbackConverter;
 using esphome::respeaker_realtime::PcmFrameAssembler;
-using esphome::respeaker_realtime::SessionLifecycle;
+using esphome::respeaker_realtime::ProductionSessionState;
+using esphome::respeaker_realtime::RawCadenceConverter;
+using esphome::respeaker_realtime::RawFrameClock;
 using esphome::respeaker_realtime::StaticStaleQueue;
 using esphome::respeaker_realtime::convert_48k_stereo_s32_to_24k_mono_s16;
 using esphome::respeaker_realtime::convert_48k_stereo_s32le_to_24k_mono_s16le;
@@ -110,28 +112,83 @@ void test_phase_is_carried_across_callbacks() {
   EXPECT_EQ(output[2], 4);
 }
 
-void test_actual_microphone_callback_resampling() {
-  MicrophoneCallbackConverter converter(0);
-  std::vector<uint8_t> input;
-  append_stereo(input, 0 << 16, 100 << 16);
-  append_stereo(input, 3 << 16, 103 << 16);
-  append_stereo(input, 6 << 16, 106 << 16);
+void test_long_run_raw_cadence_and_callback_boundaries() {
+  RawCadenceConverter converter(0);
+  std::array<uint8_t, 85 * 8> full{};
+  std::array<uint8_t, 43 * 8> half{};
+  std::array<int16_t, 128> output{};
+  size_t total = 0;
+  for (size_t callback = 0; callback < 187; callback++)
+    total += converter.convert(full.data(), full.size(), 256, output.data(), output.size());
+  total += converter.convert(half.data(), half.size(), 128, output.data(), output.size());
+  EXPECT_EQ(total, 24000U);
+  EXPECT_EQ(converter.raw_phase(), 0U);
 
-  std::array<int16_t, 5> output{};
-  size_t count = 0;
-  for (size_t offset = 0; offset < input.size(); offset += 8)
-    count += converter.convert_frame(input.data() + offset, output.data() + count);
-  EXPECT_EQ(count, 4U);
-  EXPECT_EQ(output[0], 0);
-  EXPECT_EQ(output[1], 2);
-  EXPECT_EQ(output[2], 4);
-  EXPECT_EQ(output[3], 6);
+  RawFrameClock clock;
+  size_t timed_total = 0;
+  for (size_t callback = 0; callback <= 187; callback++)
+    timed_total += clock.advance(callback * 1000000 / 187);
+  EXPECT_EQ(timed_total, 48000U);
 
   converter.reset();
-  converter.set_input_channel(1);
-  int16_t selected[2]{};
-  EXPECT_EQ(converter.convert_frame(input.data(), selected), 1U);
-  EXPECT_EQ(selected[0], 100);
+  total = converter.convert(half.data(), half.size(), 127, output.data(), output.size());
+  total += converter.convert(half.data(), half.size(), 129, output.data(), output.size());
+  EXPECT_EQ(total, 128U);
+  EXPECT_EQ(converter.raw_phase(), 0U);
+}
+
+void test_raw_cadence_channel_and_sign() {
+  RawCadenceConverter converter(1);
+  std::vector<uint8_t> selected;
+  append_stereo(selected, 0, 0x12340000);
+  append_stereo(selected, 0, INT32_MIN);
+  std::array<int16_t, 4> output{};
+  EXPECT_EQ(converter.convert(selected.data(), selected.size(), 6, output.data(), output.size()), 3U);
+  EXPECT_EQ(output[0], 0x1234);
+  EXPECT_EQ(output[1], 0x1234);
+  EXPECT_EQ(output[2], INT16_MIN);
+}
+
+void test_production_session_state_interleavings() {
+  ProductionSessionState state;
+  const auto first = state.start();
+  EXPECT_TRUE(state.needs_reopen(0));
+  EXPECT_TRUE(state.on_open(first));
+  EXPECT_TRUE(!state.capture_send_token().valid);
+  EXPECT_TRUE(state.on_hello(first));
+  EXPECT_TRUE(state.on_ready(first));
+  const auto send = state.capture_send_token();
+  EXPECT_TRUE(send.valid);
+  bool sent = false;
+  EXPECT_TRUE(state.run_if_current(send, [&]() { sent = true; }));
+  EXPECT_TRUE(sent);
+
+  state.stop();
+  EXPECT_TRUE(!state.may_send(send));
+  sent = false;
+  EXPECT_TRUE(!state.run_if_current(send, [&]() { sent = true; }));
+  EXPECT_TRUE(!sent);
+  const auto second = state.start();
+  EXPECT_TRUE(second.generation != first.generation);
+  EXPECT_TRUE(second.transport_epoch != first.transport_epoch);
+  EXPECT_TRUE(state.needs_reopen(first.transport_epoch));
+  EXPECT_TRUE(!state.on_ready(first));
+  EXPECT_TRUE(state.on_open(second));
+  EXPECT_TRUE(state.on_hello(second));
+  EXPECT_TRUE(state.on_ready(second));
+
+  const auto callback = state.capture_audio_token();
+  state.advance_audio_epoch();
+  EXPECT_TRUE(!state.may_emit(callback));
+}
+
+void test_fragmented_controls() {
+  FragmentedTextAssembler assembler;
+  EXPECT_EQ(assembler.append(0x01, false, 0, "{\"ty", 4), FragmentedTextAssembler::Result::INCOMPLETE);
+  EXPECT_EQ(assembler.append(0x00, true, 0, "pe\":\"ready\"}", 12), FragmentedTextAssembler::Result::COMPLETE);
+  EXPECT_EQ(std::string(assembler.data(), assembler.size()), std::string("{\"type\":\"ready\"}"));
+  assembler.reset();
+  EXPECT_EQ(assembler.append(0x00, true, 0, "bad", 3), FragmentedTextAssembler::Result::REJECTED);
 }
 
 void test_frame_size_and_cadence() {
@@ -174,31 +231,6 @@ void test_bounded_queue_drops_stale_first() {
   EXPECT_EQ(queue.stale_cleared(), 1U);
 }
 
-void test_session_ordering_and_reconnect() {
-  SessionLifecycle lifecycle;
-  EXPECT_TRUE(lifecycle.start(7));
-  EXPECT_TRUE(!lifecycle.start(8));
-  EXPECT_TRUE(!lifecycle.can_send_audio());
-  EXPECT_TRUE(!lifecycle.on_ready(7));
-  EXPECT_TRUE(lifecycle.on_connected());
-  EXPECT_TRUE(!lifecycle.can_send_audio());
-  lifecycle.on_hello_sent();
-  EXPECT_TRUE(!lifecycle.on_ready(8));
-  EXPECT_TRUE(lifecycle.on_ready(7));
-  EXPECT_TRUE(lifecycle.can_send_audio());
-
-  lifecycle.on_disconnected();
-  EXPECT_TRUE(!lifecycle.can_send_audio());
-  EXPECT_EQ(lifecycle.next_backoff_ms(), 250U);
-  EXPECT_EQ(lifecycle.next_backoff_ms(), 500U);
-  EXPECT_EQ(lifecycle.next_backoff_ms(), 1000U);
-  EXPECT_EQ(lifecycle.next_backoff_ms(), 2000U);
-  EXPECT_EQ(lifecycle.next_backoff_ms(), 4000U);
-  EXPECT_EQ(lifecycle.next_backoff_ms(), 4000U);
-  lifecycle.stop();
-  EXPECT_TRUE(!lifecycle.active());
-}
-
 void test_credentials_are_redacted() {
   const std::string secret = "device-credential-never-log";
   const std::string safe_value = credential_log_value(secret);
@@ -211,10 +243,12 @@ void test_credentials_are_redacted() {
 int main() {
   test_conversion_vectors();
   test_phase_is_carried_across_callbacks();
-  test_actual_microphone_callback_resampling();
+  test_long_run_raw_cadence_and_callback_boundaries();
+  test_raw_cadence_channel_and_sign();
+  test_production_session_state_interleavings();
+  test_fragmented_controls();
   test_frame_size_and_cadence();
   test_bounded_queue_drops_stale_first();
-  test_session_ordering_and_reconnect();
   test_credentials_are_redacted();
   if (failures != 0) {
     std::cerr << failures << " test assertion(s) failed\n";

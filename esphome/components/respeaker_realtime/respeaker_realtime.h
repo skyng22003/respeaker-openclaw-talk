@@ -50,7 +50,7 @@ class RespeakerRealtime : public Component {
   uint32_t stale_frames() const { return this->stale_frames_.load(); }
   uint32_t ignored_before_ready() const { return this->ignored_before_ready_.load(); }
   uint32_t reconnect_count() const { return this->reconnect_count_.load(); }
-  bool is_transport_ready() const { return this->ready_.load(); }
+  bool is_transport_ready() const { return this->session_state_.ready(); }
 
  protected:
   static constexpr size_t UPLINK_QUEUE_DEPTH = 6;
@@ -62,7 +62,6 @@ class RespeakerRealtime : public Component {
   static void websocket_event_(void *handler_args, esp_event_base_t event_base, int32_t event_id, void *event_data);
   void handle_websocket_event_(esp_websocket_event_id_t event_id, esp_websocket_event_data_t *event_data);
   void handle_microphone_data_(const std::vector<uint8_t> &data);
-  void handle_input_frame_(const uint8_t *frame);
   bool open_transport_();
   void close_transport_();
   bool send_hello_();
@@ -80,22 +79,19 @@ class RespeakerRealtime : public Component {
   uint16_t idle_timeout_seconds_{30};
   uint8_t input_channel_{0};
 
-  MicrophoneCallbackConverter converter_{};
+  RawCadenceConverter converter_{};
+  RawFrameClock raw_clock_{};
+  ProductionSessionState session_state_{};
   PcmFrameAssembler assembler_{};
   StaticStaleQueue<AudioFrame, UPLINK_QUEUE_DEPTH> uplink_queue_{};
   portMUX_TYPE queue_mux_ = portMUX_INITIALIZER_UNLOCKED;
 
-  std::array<uint8_t, INPUT_FRAME_BYTES> input_tail_{};
-  size_t input_tail_size_{0};
-
   std::atomic<bool> session_requested_{false};
-  std::atomic<bool> ready_{false};
   std::atomic<bool> connected_{false};
   std::atomic<bool> hello_sent_{false};
   std::atomic<bool> reconnect_needed_{false};
   std::atomic<bool> retry_reset_requested_{false};
-  std::atomic<uint32_t> generation_{0};
-  std::atomic<uint32_t> audio_epoch_{0};
+  std::atomic<uint32_t> opened_transport_epoch_{0};
   std::atomic<StopReason> stop_reason_{StopReason::LOCAL_STOP};
 
   std::atomic<uint32_t> sent_frames_{0};
@@ -105,14 +101,11 @@ class RespeakerRealtime : public Component {
   std::atomic<uint32_t> reconnect_count_{0};
 
   esp_websocket_client_handle_t websocket_{nullptr};
-  std::array<char, 512> text_message_{};
-  size_t text_message_length_{0};
-  size_t text_frame_base_{0};
-  bool text_message_in_progress_{false};
+  FragmentedTextAssembler text_assembler_{};
 
   // Accessed only by the microphone callback task.
   uint32_t processed_audio_epoch_{0};
-  uint32_t processing_generation_{0};
+  SessionToken processing_token_{};
 
   TaskHandle_t transport_task_handle_{nullptr};
   StaticTask_t transport_task_buffer_{};
