@@ -9,7 +9,8 @@
 substitutions:
   name: respeaker-xvf3800-realtime
   friendly_name: reSpeaker XVF3800 Realtime Prototype
-  respeaker_ref: feature/realtime-talk-bridge
+  respeaker_ref: main
+  realtime_ref: feature/realtime-talk-bridge
 
 packages:
   respeaker:
@@ -22,7 +23,23 @@ packages:
       - packages/voice-assistant.yaml
       - packages/leds.yaml
       - packages/timers-alarm.yaml
+  realtime:
+    url: https://github.com/skyng22003/respeaker-openclaw-talk
+    ref: ${realtime_ref}
+    refresh: 0s
+    files:
       - packages/realtime-talk.yaml
+
+# The existing hardware components remain sourced from upstream main. Only the
+# opt-in realtime component comes from the project branch.
+external_components:
+  - source:
+      type: git
+      url: https://github.com/skyng22003/respeaker-openclaw-talk
+      ref: ${realtime_ref}
+    components:
+      - respeaker_realtime
+    refresh: 0s
 
 wifi:
   ssid: !secret wifi_ssid
