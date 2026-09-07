@@ -16,7 +16,7 @@ The existing `packages/voice-assistant.yaml` path is unchanged. Realtime transpo
 
 1. Initial Task 3 RED: the dependency-free source-presence assertion failed because the conversion/lifecycle implementation did not exist.
 2. Fix Round 1 RED: new production-contract assertions failed because `RawCadenceConverter` and `ProductionSessionState` did not exist. Native tests were also changed first to reference those missing types, including immediate restart, stop-during-send, in-flight epoch advance, fragmented controls, and one-second cadence vectors.
-3. Fix Round 1 GREEN: the dependency-free suite passes with production using those extracted types. The authoritative C++17 test remains uncompiled because the environment has no `c++`, `g++`, or `clang++`; no compiler or package was installed.
+3. Fix Round 1 GREEN: the dependency-free suite passes with production using those extracted types. A later controller check found the existing `/usr/bin/c++` compiler on `agents-stable`; the authoritative C++17 test was copied to a temporary directory there, compiled with `-std=c++17 -Wall -Wextra -Werror -pedantic`, and passed. No compiler or package was installed.
 
 ## Implementation
 
@@ -86,12 +86,18 @@ Passed:
 - Source/API review against ESPHome `2026.6.0`, `formatBCE/esphome@respeaker_microphone`, Espressif `esp_websocket_client` `1.6.1`, and the checked-in Task 2 bridge protocol/server.
 - Invariant diff: no changes to `packages/hardware.yaml`, XVF3800 component sources, or the `1.0.7` DSP firmware binary.
 
-Unavailable locally:
+Additional native verification:
 
-- Native C++17 compile/run: no `c++`, `g++`, or `clang++` is installed.
-- ESPHome schema/code generation and full ESP-IDF compile: no `esphome`, PlatformIO, or ESP-IDF toolchain is installed.
+- The controller found the existing `/usr/bin/c++` compiler on `agents-stable` and copied only `audio_convert.h` plus `test_audio_convert.cpp` into a temporary directory.
+- First compile exposed a test-harness-only defect: the generic equality diagnostic attempted to stream a scoped enum. The diagnostic was made type-agnostic without changing production code or assertion semantics.
+- Re-run command used `c++ -std=c++17 -Wall -Wextra -Werror -pedantic`; compilation succeeded and the executable reported `All respeaker_realtime native tests passed`.
+- The temporary remote test directory was removed. No compiler or package was installed.
 
-No compiler/toolchain was installed and no unapproved container was created. The Python/source checks are useful evidence but do not replace the blocked native and firmware builds.
+Still unavailable:
+
+- ESPHome schema/code generation and full ESP-IDF compile: no `esphome`, PlatformIO, or ESP-IDF toolchain or pre-existing suitable container was found.
+
+The Python and native C++ checks are useful evidence but do not replace the blocked full firmware build.
 
 ## Security and self-review
 
@@ -103,9 +109,9 @@ No compiler/toolchain was installed and no unapproved container was created. The
 - Matching generation, transport epoch, audio epoch, active connection, sent `hello`, requested session, and `ready` all gate audio.
 - Queue capacity, send timeout, network timeout, retry count, and backoff are finite.
 
-## Unvalidated hardware/compiler items
+## Unvalidated firmware/hardware items
 
-Hardware validation remains pending and unauthorized:
+Firmware and hardware validation remain pending and unauthorized:
 
 - compile against the exact ESPHome 2026.6.0 / ESP-IDF graph and confirm managed WebSocket, cJSON, and certificate-bundle linkage;
 - verify on-device callback metadata, channel ordering, 32-bit slot alignment, callback timestamps, and the pinned fork's per-read every-third behavior;

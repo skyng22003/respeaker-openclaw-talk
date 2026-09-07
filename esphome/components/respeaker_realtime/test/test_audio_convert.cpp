@@ -37,8 +37,7 @@ int failures = 0;
     const auto actual_value = (actual);                                                                                 \
     const auto expected_value = (expected);                                                                             \
     if (!(actual_value == expected_value)) {                                                                            \
-      std::cerr << __FILE__ << ':' << __LINE__ << ": expected " #actual " == " #expected << " (" << actual_value \
-                << " != " << expected_value << ")\n";                                                               \
+      std::cerr << __FILE__ << ':' << __LINE__ << ": expected " #actual " == " #expected << '\n';                  \
       failures++;                                                                                                       \
     }                                                                                                                   \
   } while (0)
