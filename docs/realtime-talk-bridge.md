@@ -35,6 +35,40 @@ input, AIC3104-backed speaker chain, mute behavior, wake/`Stop` models, and LED
 control. The board-fixed pins and `packages/hardware.yaml` XVF3800 internal-host
 DSP firmware `1.0.7` are immutable constraints for this project.
 
+## Task 3 software-only verification
+
+The pure raw-I2S conversion, actual pinned-fork callback resampling, framing,
+stale-first queue, lifecycle ordering, reconnect, and credential-redaction checks are in
+`esphome/components/respeaker_realtime/test/`. On a host with a C++17 compiler,
+run the authoritative native test with:
+
+```bash
+mkdir -p /tmp/respeaker-task3-test
+c++ -std=c++17 -Wall -Wextra -Werror -pedantic \
+  esphome/components/respeaker_realtime/test/test_audio_convert.cpp \
+  -o /tmp/respeaker-task3-test/test_audio_convert
+/tmp/respeaker-task3-test/test_audio_convert
+```
+
+The dependency-free fallback check can be run without ESPHome or a C++ compiler:
+
+```bash
+python3 esphome/components/respeaker_realtime/test/test_host_contract.py
+```
+
+For full validation, temporarily use the repository-local `esphome/components`
+as the external-component source in a local, uncommitted copy of the example,
+then run:
+
+```bash
+esphome config config/respeaker-xvf-realtime-example.yaml
+esphome compile config/respeaker-xvf-realtime-example.yaml
+```
+
+Neither compile command uploads firmware. Firmware upload and hardware audio,
+cadence, reconnect, and sustained-operation validation remain blocked pending
+explicit flash approval.
+
 ## Recovery acceptance checks
 
 A rollback is successful only when the restored device boots reliably,
