@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 
-import { parseControl, validatePcmFrame } from "../src/protocol.js";
+import {
+  bridgeControlSchema,
+  parseControl,
+  validatePcmFrame,
+} from "../src/protocol.js";
 
 const validHello = {
   type: "hello",
@@ -41,6 +45,53 @@ describe("parseControl", () => {
     expect(() =>
       parseControl(JSON.stringify({ ...validHello, idleTimeoutSeconds })),
     ).toThrow();
+  });
+
+  it.each(["barge_in", "stop", "pong"] as const)(
+    "accepts strict %s controls with version and generation",
+    (type) => {
+      expect(parseControl(JSON.stringify({ type, version: 1, generation: 9 }))).toEqual({
+        type,
+        version: 1,
+        generation: 9,
+      });
+    },
+  );
+
+  it.each(["barge_in", "stop", "pong"] as const)(
+    "rejects malformed %s controls",
+    (type) => {
+      expect(() => parseControl(JSON.stringify({ type, generation: 1 }))).toThrow();
+      expect(() => parseControl(JSON.stringify({ type, version: 2, generation: 1 }))).toThrow();
+      expect(() => parseControl(JSON.stringify({ type, version: 1 }))).toThrow();
+      expect(() =>
+        parseControl(JSON.stringify({ type, version: 1, generation: 1, extra: true })),
+      ).toThrow();
+    },
+  );
+});
+
+describe("bridgeControlSchema", () => {
+  it.each([
+    { type: "ready", version: 1, generation: 1 },
+    { type: "activity", version: 1, generation: 1, activity: "listening" },
+    { type: "clear", version: 1, generation: 1 },
+    { type: "error", version: 1, generation: 1, code: "safe_code" },
+    { type: "close", version: 1, generation: 1, reason: "done" },
+    { type: "ping", version: 1, generation: 1 },
+  ])("accepts $type", (control) => {
+    expect(bridgeControlSchema.parse(control)).toEqual(control);
+  });
+
+  it.each([
+    { type: "ready", generation: 1 },
+    { type: "activity", version: 1, generation: 1, activity: "unknown" },
+    { type: "clear", version: 2, generation: 1 },
+    { type: "error", version: 1, generation: 1, code: "safe", extra: true },
+    { type: "close", version: 1, reason: "done" },
+    { type: "ping", version: 1, generation: -1 },
+  ])("rejects malformed $type", (control) => {
+    expect(() => bridgeControlSchema.parse(control)).toThrow();
   });
 });
 

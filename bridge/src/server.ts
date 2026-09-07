@@ -20,6 +20,7 @@ export interface TalkPort {
 export interface BridgeDependencies {
   credential: string;
   openTalk(device: DeviceHello): Promise<TalkPort>;
+  shutdownGraceMs?: number;
 }
 
 export interface DeviceSessionPort {
@@ -41,6 +42,10 @@ function asBuffer(data: RawData): Buffer {
   throw new TypeError("Unsupported WebSocket frame representation");
 }
 
+function ignoreCloseFailure(close: Promise<void>): void {
+  void close;
+}
+
 function sendControl(socket: WebSocket, control: BridgeControl): void {
   if (socket.readyState === WebSocket.OPEN) {
     socket.send(JSON.stringify(control));
@@ -53,6 +58,7 @@ class DeviceSession implements DeviceSessionPort {
   readonly #socket: WebSocket;
   readonly #talk: TalkPort;
   readonly #onClosed: (session: DeviceSession) => void;
+  #active = true;
   #closing: Promise<void> | undefined;
 
   constructor(
@@ -68,16 +74,21 @@ class DeviceSession implements DeviceSessionPort {
     this.#onClosed = onClosed;
   }
 
+  get active(): boolean {
+    return this.#active;
+  }
+
   appendAudio(pcm: Buffer): Promise<void> {
-    return this.#talk.appendAudio(pcm);
+    return this.#active ? this.#talk.appendAudio(pcm) : Promise.resolve();
   }
 
   cancelOutput(): Promise<"applied" | "stale" | "idle"> {
-    return this.#talk.cancelOutput("barge-in");
+    return this.#active ? this.#talk.cancelOutput("barge-in") : Promise.resolve("stale");
   }
 
   close(code = 1000, reason = "session closed", controlReason?: string): Promise<void> {
     if (this.#closing !== undefined) return this.#closing;
+    this.#active = false;
 
     this.#closing = (async () => {
       if (controlReason !== undefined) {
@@ -96,6 +107,8 @@ class DeviceSession implements DeviceSessionPort {
       }
       try {
         await this.#talk.close();
+      } catch {
+        console.error("Talk session close failed");
       } finally {
         this.#onClosed(this);
       }
@@ -181,7 +194,11 @@ export function createBridgeServer(deps: BridgeDependencies): Server {
         }
 
         if (socket.readyState !== WebSocket.OPEN) {
-          await talk.close();
+          try {
+            await talk.close();
+          } catch {
+            console.error("Talk session close failed");
+          }
           return;
         }
 
@@ -214,6 +231,7 @@ export function createBridgeServer(deps: BridgeDependencies): Server {
         closePolicy("hello already received");
         return;
       }
+      if (!activeSession.active || sessions.get(activeSession.deviceId) !== activeSession) return;
       if (control.generation !== activeSession.generation) return;
 
       if (control.type === "barge_in") {
@@ -229,6 +247,7 @@ export function createBridgeServer(deps: BridgeDependencies): Server {
           closePolicy("hello required");
           return;
         }
+        if (!activeSession.active || sessions.get(activeSession.deviceId) !== activeSession) return;
         await activeSession.appendAudio(validatePcmFrame(asBuffer(data)));
         return;
       }
@@ -242,7 +261,7 @@ export function createBridgeServer(deps: BridgeDependencies): Server {
         .then(() => handleMessage(data, isBinary))
         .catch(() => {
           if (activeSession !== undefined) {
-            void activeSession.close(1011, "session error", "session_error");
+            ignoreCloseFailure(activeSession.close(1011, "session error", "session_error"));
           } else {
             closePolicy("invalid message");
           }
@@ -250,11 +269,13 @@ export function createBridgeServer(deps: BridgeDependencies): Server {
     });
 
     socket.on("close", () => {
-      if (activeSession !== undefined) void activeSession.close();
+      if (activeSession !== undefined) ignoreCloseFailure(activeSession.close());
     });
 
     socket.on("error", () => {
-      if (activeSession !== undefined) void activeSession.close(1011, "transport error");
+      if (activeSession !== undefined) {
+        ignoreCloseFailure(activeSession.close(1011, "transport error"));
+      }
     });
   });
 
@@ -275,7 +296,21 @@ export function createBridgeServer(deps: BridgeDependencies): Server {
           socket.close(1001, "server shutdown");
         }
       }
-      await new Promise<void>((resolve) => webSockets.close(() => resolve()));
+      await new Promise<void>((resolve) => {
+        let settled = false;
+        const finish = (): void => {
+          if (settled) return;
+          settled = true;
+          clearTimeout(timer);
+          resolve();
+        };
+        const timer = setTimeout(() => {
+          for (const socket of webSockets.clients) socket.terminate();
+          finish();
+        }, deps.shutdownGraceMs ?? 250);
+        timer.unref();
+        webSockets.close(finish);
+      });
     })();
 
     void shutdown.then(

@@ -19,9 +19,9 @@ export class BoundedQueue<T> {
       return {};
     }
 
-    const dropped = this.#values.shift();
+    const dropped = this.#values.shift() as T;
     this.#values.push(value);
-    return dropped === undefined ? {} : { dropped };
+    return { dropped };
   }
 
   shift(): T | undefined {

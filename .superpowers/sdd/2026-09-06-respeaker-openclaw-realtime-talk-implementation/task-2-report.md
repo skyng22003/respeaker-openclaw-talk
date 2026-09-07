@@ -252,3 +252,184 @@ Generated `bridge/dist/` and `bridge/node_modules/` are not part of the commit.
 2. The Task 2 entry point cannot open a real Talk session by design; Task 5 must inject the Gateway-backed `openTalk` implementation.
 3. LAN interface restriction is configuration-driven (`BRIDGE_HOST`, default loopback). Task 7 deployment must bind the intended private/LAN interface and avoid public ingress.
 4. `ws://` transport is acceptable only on the trusted LAN per the approved prototype design; TLS/mTLS remains a later hardening option.
+
+## Fix Round 1 — 2026-09-07
+
+**Reviewed head:** `9767a32baf0ee01498eb76e5c5862ce93d962fd5`
+**Commit message:** `fix: harden realtime bridge session ownership`
+
+All four Important and both Minor review findings were addressed within Task 2 scope.
+
+### Ownership and invalidation fences (I1)
+
+Added explicit active-state invalidation at the start of `DeviceSession.close()`. Every queued audio and control dispatch now verifies both that the session remains active and that the exact session object still owns its device-map entry. This fences queued work after Stop, socket closure, and concurrent generation supersession.
+
+RED command:
+
+```text
+npm test -- server-auth.test.ts
+```
+
+RED result (exit 1):
+
+```text
+× does not dispatch queued old audio or controls after concurrent supersession
+  expected appendAudio to be called once, but got 2 times
+× does not dispatch messages queued behind stop
+  expected appendAudio not to be called, but got 1 time
+Tests  2 failed | 8 passed (10)
+```
+
+GREEN command:
+
+```text
+npm test -- server-auth.test.ts
+```
+
+GREEN result (exit 0 after ownership fix):
+
+```text
+✓ test/server-auth.test.ts (10 tests)
+Tests  10 passed (10)
+```
+
+### Bounded shutdown and sanitized adapter-close failure (I3, I4)
+
+Added configurable internal `shutdownGraceMs` (default 250 ms). Shutdown first sends normal close frames, then terminates any remaining peers when the grace expires. `DeviceSession.close()` now catches adapter rejection, emits only a fixed sanitized diagnostic, always performs owner cleanup, and resolves; all fire-and-forget boundaries therefore consume a non-rejecting closure promise. The pre-activation Talk cleanup path also catches and sanitizes adapter-close rejection.
+
+RED command:
+
+```text
+npm test -- server-auth.test.ts
+```
+
+RED result (exit 1):
+
+```text
+× bounds shutdown and terminates a peer that withholds the close handshake
+  Test timed out in 5000ms
+× sanitizes rejecting adapter close without an unhandled rejection
+  expected unhandledRejection listener not to be called, but got 1 time
+Tests  2 failed | 10 passed (12)
+```
+
+GREEN command:
+
+```text
+npm test -- server-auth.test.ts
+```
+
+GREEN result (exit 0):
+
+```text
+✓ test/server-auth.test.ts (12 tests)
+Tests  12 passed (12)
+```
+
+The rejecting-close test observes only the fixed diagnostic `Talk session close failed`; the adapter's error text is not logged or rethrown.
+
+### Undefined queue eviction (M1)
+
+Capacity, rather than dropped-value identity, now determines whether the returned object owns a `dropped` property. `BoundedQueue<undefined>` correctly returns `{ dropped: undefined }` on eviction.
+
+RED command:
+
+```text
+npm test -- bounded-queue.test.ts
+```
+
+RED result (exit 1):
+
+```text
+× reports eviction even when the dropped value is undefined
+  expected Object.hasOwn(result, "dropped") to be true
+Tests  1 failed | 4 passed (5)
+```
+
+GREEN command:
+
+```text
+npm test -- bounded-queue.test.ts
+```
+
+GREEN result (exit 0):
+
+```text
+✓ test/bounded-queue.test.ts (5 tests)
+Tests  5 passed (5)
+```
+
+### Protocol/server coverage and Node engine (I2, M2)
+
+Expanded tests to cover all device controls, every bridge control schema, required version/generation fields, strict extra-field rejection, malformed post-auth controls, 4096-byte WebSocket payload enforcement, stale-owner preservation, delayed concurrent supersession, queued post-Stop work, non-cooperative shutdown, and rejecting adapter closure.
+
+Aligned the package and lockfile engine declaration to the pinned Vitest/Vite toolchain floor:
+
+```text
+node: >=22.12 <23
+```
+
+No compatible Node 22.12+ executable was locally available without installation (`node`, `node22`, `nodejs22`, common `/usr/local`, `/opt`, and `/root/.nvm` locations were checked). Final verification therefore ran on the available Node `v24.19.0`; deployment/CI remains required to execute the locked package on Node 22.12+ before release.
+
+### Final verification
+
+Command:
+
+```text
+npm test
+```
+
+Result (exit 0):
+
+```text
+✓ test/bounded-queue.test.ts (5 tests)
+✓ test/protocol.test.ts (26 tests)
+✓ test/server-auth.test.ts (15 tests)
+Test Files  3 passed (3)
+Tests       46 passed (46)
+```
+
+Command:
+
+```text
+npm run build
+```
+
+Result (exit 0):
+
+```text
+> tsc -p tsconfig.json
+```
+
+Command:
+
+```text
+npm install --package-lock-only --include=dev
+```
+
+Result: lockfile updated, 48 packages audited, 0 vulnerabilities.
+
+### Files changed in Fix Round 1
+
+- `bridge/package.json`
+- `bridge/package-lock.json`
+- `bridge/src/bounded-queue.ts`
+- `bridge/src/server.ts`
+- `bridge/test/bounded-queue.test.ts`
+- `bridge/test/protocol.test.ts`
+- `bridge/test/server-auth.test.ts`
+- `.superpowers/sdd/2026-09-06-respeaker-openclaw-realtime-talk-implementation/task-2-report.md`
+
+### Fix-round self-review
+
+- Closure invalidates dispatch synchronously before WebSocket or adapter awaits.
+- Dispatch checks active state and exact map ownership immediately before each adapter call.
+- New session admission still awaits old Talk closure and retains owner-checked cleanup.
+- Rejecting adapter closure cannot become an unhandled rejection and cannot block cleanup or supersession.
+- Shutdown remains graceful for cooperative peers and bounded for non-cooperative peers.
+- Diagnostics contain no credentials, audio, device IDs, or adapter error details.
+- No Gateway, ESP32, deployment, firmware, OpenClaw, or out-of-bridge dependency changes were introduced.
+
+### Remaining concern
+
+An actual Node 22.12+ runtime was unavailable locally. The manifest/lockfile floor now matches the pinned toolchain, but execution on Node 22.12+ must be included in deployment or CI validation.

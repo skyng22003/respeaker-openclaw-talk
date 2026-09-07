@@ -23,6 +23,14 @@ describe("BoundedQueue", () => {
     expect(queue.shift()).toBeUndefined();
   });
 
+  it("reports eviction even when the dropped value is undefined", () => {
+    const queue = new BoundedQueue<undefined>(1);
+    queue.push(undefined);
+
+    expect(queue.push(undefined)).toEqual({ dropped: undefined });
+    expect(Object.hasOwn(queue.push(undefined), "dropped")).toBe(true);
+  });
+
   it("clears every queued value", () => {
     const queue = new BoundedQueue<number>(3);
     queue.push(1);
