@@ -15,6 +15,22 @@ respeaker_realtime:
   idle_timeout: 30s
   input_channel: 0
 
+# Temporary manual controls for validating the end-to-end transport before
+# wake/Stop lifecycle integration is added.
+button:
+  - platform: template
+    name: "Start realtime session"
+    entity_category: diagnostic
+    on_press:
+      - lambda: id(realtime_client).start_session("manual");
+  - platform: template
+    name: "Stop realtime session"
+    entity_category: diagnostic
+    on_press:
+      - lambda: |-
+          id(realtime_client).stop_session(
+              esphome::respeaker_realtime::StopReason::LOCAL_STOP);
+
 sensor:
   - platform: template
     name: "Realtime uplink sent frames"

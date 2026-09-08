@@ -15,6 +15,7 @@ HEADER = (ROOT / "audio_convert.h").read_text()
 PLAYBACK = (ROOT / "playback.h").read_text()
 SOURCE = (ROOT / "respeaker_realtime.cpp").read_text()
 SCHEMA = (ROOT / "__init__.py").read_text()
+PACKAGE = (ROOT.parents[2] / "packages" / "realtime-talk.yaml").read_text()
 
 
 def reference_convert(raw: bytes, channel: int = 0, phase: int = 0):
@@ -89,6 +90,16 @@ class QueueAndLifecycleVectors(unittest.TestCase):
 
 
 class SourceContracts(unittest.TestCase):
+    def test_temporary_home_assistant_session_controls(self):
+        self.assertIn('name: "Start realtime session"', PACKAGE)
+        self.assertIn('id(realtime_client).start_session("manual");', PACKAGE)
+        self.assertIn('name: "Stop realtime session"', PACKAGE)
+        compact_package = "".join(PACKAGE.split())
+        self.assertIn(
+            "id(realtime_client).stop_session(esphome::respeaker_realtime::StopReason::LOCAL_STOP);",
+            compact_package,
+        )
+
     def test_fixed_audio_contract_and_stale_first_queue(self):
         self.assertIn("PCM_SAMPLES_PER_FRAME = 480", HEADER)
         self.assertIn("PCM_FRAME_BYTES = PCM_SAMPLES_PER_FRAME * sizeof(int16_t)", HEADER)
