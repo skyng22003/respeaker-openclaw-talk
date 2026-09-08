@@ -1,0 +1,17 @@
+services:
+  respeaker-talk-bridge:
+    build: .
+    image: respeaker-openclaw-talk-bridge:local
+    restart: unless-stopped
+    env_file:
+      - /etc/respeaker-talk-bridge/env
+    ports:
+      # Replace the host address with the private LAN address after firewall review.
+      - "127.0.0.1:8787:8787/tcp"
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL

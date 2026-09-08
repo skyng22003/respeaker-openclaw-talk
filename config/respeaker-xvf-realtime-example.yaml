@@ -1,0 +1,61 @@
+# =============================================================================
+# reSpeaker XVF3800 OpenClaw realtime uplink — software prototype.
+#
+# This configuration is additive: the existing voice-assistant behavior remains
+# present until Task 6 explicitly moves wake/Stop lifecycle to realtime mode.
+# Building this file does not authorize uploading it to hardware.
+# =============================================================================
+
+substitutions:
+  name: respeaker-xvf3800-realtime
+  friendly_name: reSpeaker XVF3800 Realtime Prototype
+  respeaker_ref: main
+  realtime_ref: feature/realtime-talk-bridge
+
+packages:
+  respeaker:
+    url: https://github.com/formatBCE/Respeaker-XVF3800-ESPHome-integration
+    ref: ${respeaker_ref}
+    refresh: 1d
+    files:
+      - packages/base.yaml
+      - packages/hardware.yaml
+      - packages/voice-assistant.yaml
+      - packages/leds.yaml
+      - packages/timers-alarm.yaml
+  realtime:
+    url: https://github.com/skyng22003/respeaker-openclaw-talk
+    ref: ${realtime_ref}
+    refresh: 0s
+    files:
+      - packages/realtime-talk.yaml
+
+# The existing hardware components remain sourced from upstream main. Only the
+# opt-in realtime component comes from the project branch.
+external_components:
+  - source:
+      type: git
+      url: https://github.com/skyng22003/respeaker-openclaw-talk
+      ref: ${realtime_ref}
+    components:
+      - respeaker_realtime
+    refresh: 0s
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+
+api:
+  encryption:
+    key: !secret api_key
+
+ota:
+  - platform: esphome
+    id: ota_esphome
+    password: !secret ota_password
+
+# Credentials stay in the local, ignored secrets.yaml. The device credential is
+# specific to this satellite; it is not an OpenClaw Gateway credential.
+respeaker_realtime:
+  bridge_url: !secret realtime_bridge_url
+  credential: !secret realtime_bridge_credential

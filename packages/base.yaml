@@ -202,6 +202,7 @@ external_components:
       ref: ${respeaker_ref}
     components:
       - respeaker_xvf3800
+      - respeaker_realtime
       - aic3104
     refresh: 0s
 

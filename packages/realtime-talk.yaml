@@ -1,0 +1,60 @@
+# =============================================================================
+# Opt-in OpenClaw realtime microphone uplink.
+#
+# Include this package only in a realtime prototype configuration. The existing
+# voice-assistant package remains unchanged and continues to be the default.
+# bridge_url and credential are intentionally supplied by the local top-level
+# configuration so no credential is present in a remote package.
+# =============================================================================
+
+respeaker_realtime:
+  id: realtime_client
+  microphone: i2s_mics
+  speaker: announcement_resampling_speaker
+  device_id: ${name}
+  idle_timeout: 30s
+  input_channel: 0
+
+sensor:
+  - platform: template
+    name: "Realtime uplink sent frames"
+    entity_category: diagnostic
+    update_interval: 10s
+    accuracy_decimals: 0
+    lambda: return id(realtime_client).sent_frames();
+  - platform: template
+    name: "Realtime uplink dropped frames"
+    entity_category: diagnostic
+    update_interval: 10s
+    accuracy_decimals: 0
+    lambda: return id(realtime_client).dropped_frames();
+  - platform: template
+    name: "Realtime uplink stale frames"
+    entity_category: diagnostic
+    update_interval: 10s
+    accuracy_decimals: 0
+    lambda: return id(realtime_client).stale_frames();
+  - platform: template
+    name: "Realtime playback played frames"
+    entity_category: diagnostic
+    update_interval: 10s
+    accuracy_decimals: 0
+    lambda: return id(realtime_client).played_frames();
+  - platform: template
+    name: "Realtime playback dropped frames"
+    entity_category: diagnostic
+    update_interval: 10s
+    accuracy_decimals: 0
+    lambda: return id(realtime_client).dropped_playback_frames();
+  - platform: template
+    name: "Realtime playback underflow polls"
+    entity_category: diagnostic
+    update_interval: 10s
+    accuracy_decimals: 0
+    lambda: return id(realtime_client).playback_underflow_polls();
+  - platform: template
+    name: "Realtime transport reconnects"
+    entity_category: diagnostic
+    update_interval: 10s
+    accuracy_decimals: 0
+    lambda: return id(realtime_client).reconnect_count();
