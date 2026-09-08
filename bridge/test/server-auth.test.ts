@@ -128,10 +128,10 @@ describe("authenticated bridge server", () => {
 
     await expect(ready).resolves.toEqual({ type: "ready", version: 1, generation: 7 });
     expect(openTalk).toHaveBeenCalledOnce();
-    expect(openTalk).toHaveBeenCalledWith(expect.objectContaining({
-      deviceId: "kitchen-xvf3800",
-      generation: 7,
-    }));
+    expect(openTalk).toHaveBeenCalledWith(
+      expect.objectContaining({ deviceId: "kitchen-xvf3800", generation: 7 }),
+      expect.objectContaining({ audio: expect.any(Function), clear: expect.any(Function) }),
+    );
   });
 
   it("closes the older generation before admitting a newer same-device session", async () => {

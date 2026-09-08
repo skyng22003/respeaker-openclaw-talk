@@ -1,11 +1,16 @@
 import { loadConfig } from "./config.js";
 import { createBridgeServer } from "./server.js";
+import { openGatewayTalk } from "./gateway-talk.js";
 
 const config = loadConfig();
 const server = createBridgeServer({
   credential: config.credential,
-  openTalk: async () => {
-    throw new Error("OpenClaw Talk adapter is not configured in bridge core");
+  openTalk: async (device, callbacks) => {
+    return await openGatewayTalk({
+      url: config.gatewayUrl,
+      token: config.gatewayToken,
+      sessionKey: config.sessionKey,
+    }, device, callbacks);
   },
 });
 

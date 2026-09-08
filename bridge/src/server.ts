@@ -17,9 +17,16 @@ export interface TalkPort {
   close(): Promise<void>;
 }
 
+export interface TalkCallbacks {
+  audio(pcm: Buffer): void;
+  clear(): void;
+  activity(activity: "listening" | "thinking" | "speaking"): void;
+  failure(code: string): void;
+}
+
 export interface BridgeDependencies {
   credential: string;
-  openTalk(device: DeviceHello): Promise<TalkPort>;
+  openTalk(device: DeviceHello, callbacks: TalkCallbacks): Promise<TalkPort>;
   shutdownGraceMs?: number;
 }
 
@@ -49,6 +56,12 @@ function ignoreCloseFailure(close: Promise<void>): void {
 function sendControl(socket: WebSocket, control: BridgeControl): void {
   if (socket.readyState === WebSocket.OPEN) {
     socket.send(JSON.stringify(control));
+  }
+}
+
+function sendAudio(socket: WebSocket, pcm: Buffer): void {
+  if (socket.readyState === WebSocket.OPEN && socket.bufferedAmount < 19_200) {
+    socket.send(pcm, { binary: true });
   }
 }
 
@@ -181,7 +194,18 @@ export function createBridgeServer(deps: BridgeDependencies): Server {
 
         let talk: TalkPort;
         try {
-          talk = await deps.openTalk(hello);
+          talk = await deps.openTalk(hello, {
+            audio: (pcm) => sendAudio(socket, pcm),
+            clear: () => sendControl(socket, {
+              type: "clear", version: 1, generation: hello.generation,
+            }),
+            activity: (activity) => sendControl(socket, {
+              type: "activity", version: 1, generation: hello.generation, activity,
+            }),
+            failure: (code) => sendControl(socket, {
+              type: "error", version: 1, generation: hello.generation, code,
+            }),
+          });
         } catch {
           sendControl(socket, {
             type: "error",
