@@ -12,6 +12,7 @@ import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
 HEADER = (ROOT / "audio_convert.h").read_text()
+PLAYBACK = (ROOT / "playback.h").read_text()
 SOURCE = (ROOT / "respeaker_realtime.cpp").read_text()
 SCHEMA = (ROOT / "__init__.py").read_text()
 
@@ -113,6 +114,38 @@ class SourceContracts(unittest.TestCase):
         self.assertIn("value.total_seconds < 5 or value.total_seconds > 300", SCHEMA)
         self.assertIn("cv.int_range(min=0, max=1)", SCHEMA)
         self.assertIn('add_idf_component(name="espressif/esp_websocket_client", ref="1.6.1")', SCHEMA)
+
+    def test_playback_never_runs_on_the_transport_callback(self):
+        callback = SOURCE[SOURCE.index("void RespeakerRealtime::handle_playback_frame_") :]
+        callback = callback[: callback.index("\n}\n")]
+        self.assertIn("this->playback_.submit(", callback)
+        for forbidden in ("speaker_->play", "speaker_->start", "speaker_->stop", "while ("):
+            self.assertNotIn(forbidden, callback)
+        # Only the dedicated playback task drives the speaker.
+        self.assertIn('xTaskCreateStatic(playback_task_entry_, "realtime_play"', SOURCE)
+        self.assertIn("this->playback_.pump(this->session_state_", SOURCE)
+        self.assertNotIn("this->speaker_->play(", SOURCE)
+
+    def test_playback_invalidation_precedes_speaker_stop(self):
+        self.assertIn("this->clear_epoch_.fetch_add(1);", PLAYBACK)
+        clear = PLAYBACK[PLAYBACK.index("void request_clear()") :]
+        clear = clear[: clear.index("\n  }\n")]
+        # request_clear invalidates and defers the stop to the playback task.
+        self.assertIn("this->stop_requested_.store(true);", clear)
+        self.assertNotIn("speaker_", clear)
+        self.assertIn("frame.clear_epoch == this->clear_epoch_.load() && state.may_emit(frame.token)", PLAYBACK)
+        # Every terminal path invalidates instead of playing stale audio.
+        for terminal in ("stop_session", "fail_session_"):
+            body = SOURCE[SOURCE.index(f"void RespeakerRealtime::{terminal}") :]
+            self.assertIn("this->playback_.request_clear();", body[: body.index("\n}\n")])
+
+    def test_playback_retains_only_the_unwritten_suffix(self):
+        self.assertIn("this->current_.audio.bytes.data() + this->offset_", PLAYBACK)
+        self.assertIn("const size_t remaining = PCM_FRAME_BYTES - this->offset_;", PLAYBACK)
+        self.assertIn("this->offset_ += written;", PLAYBACK)
+        self.assertIn("MAX_CONSECUTIVE_STALLS = 50", PLAYBACK)
+        self.assertIn("MAX_CONSECUTIVE_OVERFLOWS = 25", PLAYBACK)
+        self.assertIn("audio::AudioStreamInfo(16, 1, 24000)", SOURCE)
 
     def test_logs_redact_credentials_and_never_log_pcm(self):
         log_lines = [line for line in SOURCE.splitlines() if "ESP_LOG" in line]

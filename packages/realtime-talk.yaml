@@ -35,6 +35,24 @@ sensor:
     accuracy_decimals: 0
     lambda: return id(realtime_client).stale_frames();
   - platform: template
+    name: "Realtime playback played frames"
+    entity_category: diagnostic
+    update_interval: 10s
+    accuracy_decimals: 0
+    lambda: return id(realtime_client).played_frames();
+  - platform: template
+    name: "Realtime playback dropped frames"
+    entity_category: diagnostic
+    update_interval: 10s
+    accuracy_decimals: 0
+    lambda: return id(realtime_client).dropped_playback_frames();
+  - platform: template
+    name: "Realtime playback underflow polls"
+    entity_category: diagnostic
+    update_interval: 10s
+    accuracy_decimals: 0
+    lambda: return id(realtime_client).playback_underflow_polls();
+  - platform: template
     name: "Realtime transport reconnects"
     entity_category: diagnostic
     update_interval: 10s

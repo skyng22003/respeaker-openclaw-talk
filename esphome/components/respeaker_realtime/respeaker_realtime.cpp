@@ -37,11 +37,24 @@ void RespeakerRealtime::setup() {
 
   this->microphone_->add_data_callback(
       [this](const std::vector<uint8_t> &data) { this->handle_microphone_data_(data); });
+  // The resampling speaker must know the downlink format before the first play.
+  this->speaker_->set_audio_stream_info(audio::AudioStreamInfo(16, 1, 24000));
+  this->playback_.attach_speaker(this->speaker_);
+
   this->transport_task_handle_ = xTaskCreateStatic(transport_task_entry_, "realtime_uplink", TRANSPORT_TASK_STACK_WORDS,
                                                    this, 4, this->transport_task_stack_.data(),
                                                    &this->transport_task_buffer_);
   if (this->transport_task_handle_ == nullptr) {
     ESP_LOGE(TAG, "Could not create realtime uplink task");
+    this->mark_failed();
+    return;
+  }
+
+  this->playback_task_handle_ = xTaskCreateStatic(playback_task_entry_, "realtime_play", PLAYBACK_TASK_STACK_WORDS,
+                                                  this, 5, this->playback_task_stack_.data(),
+                                                  &this->playback_task_buffer_);
+  if (this->playback_task_handle_ == nullptr) {
+    ESP_LOGE(TAG, "Could not create realtime playback task");
     this->mark_failed();
   }
 }
@@ -55,6 +68,7 @@ void RespeakerRealtime::dump_config() {
   ESP_LOGCONFIG(TAG, "  Frame: %u ms / %u bytes", static_cast<unsigned>(PCM_FRAME_MS),
                 static_cast<unsigned>(PCM_FRAME_BYTES));
   ESP_LOGCONFIG(TAG, "  Uplink queue depth: %u", static_cast<unsigned>(UPLINK_QUEUE_DEPTH));
+  ESP_LOGCONFIG(TAG, "  Playback queue depth: %u", static_cast<unsigned>(PLAYBACK_QUEUE_DEPTH));
   ESP_LOGCONFIG(TAG, "  Idle timeout: %u s", static_cast<unsigned>(this->idle_timeout_seconds_));
 }
 
@@ -69,6 +83,7 @@ void RespeakerRealtime::start_session(const std::string &wake_word) {
   this->hello_sent_.store(false);
   this->reconnect_needed_.store(false);
   this->clear_uplink_queue_();
+  this->playback_.request_clear();
   this->microphone_->start();
 }
 
@@ -81,6 +96,9 @@ void RespeakerRealtime::stop_session(StopReason reason) {
   this->session_state_.unlock_send_fence();
   this->hello_sent_.store(false);
   this->clear_uplink_queue_();
+  // Invalidate queued and in-flight audio first; the playback task owns the
+  // speaker and performs the actual stop.
+  this->playback_.request_clear();
   this->microphone_->stop();
 }
 
@@ -95,6 +113,13 @@ void RespeakerRealtime::transport_task_() {
   while (true) {
     if (this->retry_reset_requested_.exchange(false))
       attempts = 0;
+
+    // Playback raises a latched fault; session lifecycle stays owned here.
+    if (this->playback_.take_fault() && this->session_requested_.load()) {
+      this->stop_reason_.store(StopReason::AUDIO_ERROR);
+      this->fail_session_("playback_output_stalled");
+      continue;
+    }
 
     if (!this->session_requested_.load()) {
       if (this->websocket_ != nullptr) {
@@ -186,6 +211,20 @@ void RespeakerRealtime::transport_task_() {
   }
 }
 
+void RespeakerRealtime::playback_task_entry_(void *parameter) {
+  static_cast<RespeakerRealtime *>(parameter)->playback_task_();
+}
+
+// The only context allowed to call start/play/stop on the speaker. Transport
+// callbacks merely queue, so a slow or blocked speaker can never stall the
+// WebSocket event loop.
+void RespeakerRealtime::playback_task_() {
+  while (true) {
+    if (!this->playback_.pump(this->session_state_, pdMS_TO_TICKS(PCM_FRAME_MS)))
+      vTaskDelay(pdMS_TO_TICKS(2));
+  }
+}
+
 bool RespeakerRealtime::open_transport_() {
   esp_websocket_client_config_t config{};
   config.uri = this->bridge_url_.c_str();
@@ -252,10 +291,14 @@ void RespeakerRealtime::handle_websocket_event_(esp_websocket_event_id_t event_i
     case WEBSOCKET_EVENT_DATA:
       if (event_data == nullptr || event_data->data_len < 0 || event_data->payload_offset < 0)
         break;
-      if (this->text_assembler_.append(event_data->op_code, event_data->fin, event_data->payload_offset,
-                                       event_data->data_ptr, static_cast<size_t>(event_data->data_len)) ==
-          FragmentedTextAssembler::Result::COMPLETE)
+      if (event_data->op_code == 0x02) {
+        this->handle_playback_frame_(reinterpret_cast<const uint8_t *>(event_data->data_ptr),
+                                     static_cast<size_t>(event_data->data_len));
+      } else if (this->text_assembler_.append(event_data->op_code, event_data->fin, event_data->payload_offset,
+                                              event_data->data_ptr, static_cast<size_t>(event_data->data_len)) ==
+                 FragmentedTextAssembler::Result::COMPLETE) {
         this->handle_text_message_(this->text_assembler_.data(), this->text_assembler_.size());
+      }
       break;
     default:
       break;
@@ -319,6 +362,8 @@ void RespeakerRealtime::handle_text_message_(const char *data, size_t length) {
     this->retry_reset_requested_.store(true);
   } else if (current && std::strcmp(type->valuestring, "ping") == 0) {
     this->send_control_("pong");
+  } else if (current && std::strcmp(type->valuestring, "clear") == 0) {
+    this->playback_.request_clear();
   } else if (current && (std::strcmp(type->valuestring, "error") == 0 ||
                          std::strcmp(type->valuestring, "close") == 0)) {
     this->fail_session_("bridge_closed");
@@ -373,6 +418,12 @@ bool RespeakerRealtime::pop_uplink_frame_(AudioFrame &frame) {
   return popped;
 }
 
+// Runs on the WebSocket event task: validate, copy, queue, return. No speaker
+// call and no unbounded work happens here.
+void RespeakerRealtime::handle_playback_frame_(const uint8_t *data, size_t length) {
+  this->playback_.submit(data, length, this->session_state_, this->session_state_.capture_audio_token());
+}
+
 void RespeakerRealtime::clear_uplink_queue_() {
   portENTER_CRITICAL(&this->queue_mux_);
   const size_t stale = this->uplink_queue_.size();
@@ -386,6 +437,7 @@ void RespeakerRealtime::fail_session_(const char *safe_code) {
   this->session_state_.stop();
   this->session_requested_.store(false);
   this->clear_uplink_queue_();
+  this->playback_.request_clear();
   this->microphone_->stop();
 }
 

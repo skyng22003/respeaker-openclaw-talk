@@ -1,6 +1,7 @@
 #pragma once
 
 #include "audio_convert.h"
+#include "playback.h"
 
 #include "esphome/components/microphone/microphone.h"
 #include "esphome/components/speaker/speaker.h"
@@ -16,6 +17,14 @@
 #include <freertos/task.h>
 
 namespace esphome::respeaker_realtime {
+
+// Spinlock wrapper so the playback engine can guard its bounded queue with the
+// same discipline as the uplink queue. It never wraps a speaker call.
+struct PortMuxPlaybackLock {
+  portMUX_TYPE mux = portMUX_INITIALIZER_UNLOCKED;
+  void lock() { portENTER_CRITICAL(&this->mux); }
+  void unlock() { portEXIT_CRITICAL(&this->mux); }
+};
 
 enum class StopReason : uint8_t {
   LOCAL_STOP = 0,
@@ -50,18 +59,30 @@ class RespeakerRealtime : public Component {
   uint32_t stale_frames() const { return this->stale_frames_.load(); }
   uint32_t ignored_before_ready() const { return this->ignored_before_ready_.load(); }
   uint32_t reconnect_count() const { return this->reconnect_count_.load(); }
+  uint32_t played_frames() const { return this->playback_.played_frames(); }
+  uint32_t dropped_playback_frames() const { return this->playback_.dropped_frames(); }
+  uint32_t playback_underflow_polls() const { return this->playback_.underflow_polls(); }
   bool is_transport_ready() const { return this->session_state_.ready(); }
 
  protected:
   static constexpr size_t UPLINK_QUEUE_DEPTH = 6;
+  // 6 x 20 ms is the short jitter window the design calls for: enough to ride
+  // out normal LAN jitter, short enough that a clear is heard immediately.
+  static constexpr size_t PLAYBACK_QUEUE_DEPTH = 6;
   static constexpr uint8_t MAX_RECONNECT_ATTEMPTS = 5;
   static constexpr uint32_t TRANSPORT_TASK_STACK_WORDS = 6144;
+  static constexpr uint32_t PLAYBACK_TASK_STACK_WORDS = 4096;
+
+  using Playback = PlaybackEngine<speaker::Speaker, PLAYBACK_QUEUE_DEPTH, PortMuxPlaybackLock>;
 
   static void transport_task_entry_(void *parameter);
   void transport_task_();
+  static void playback_task_entry_(void *parameter);
+  void playback_task_();
   static void websocket_event_(void *handler_args, esp_event_base_t event_base, int32_t event_id, void *event_data);
   void handle_websocket_event_(esp_websocket_event_id_t event_id, esp_websocket_event_data_t *event_data);
   void handle_microphone_data_(const std::vector<uint8_t> &data);
+  void handle_playback_frame_(const uint8_t *data, size_t length);
   bool open_transport_();
   void close_transport_();
   bool send_hello_();
@@ -84,6 +105,7 @@ class RespeakerRealtime : public Component {
   ProductionSessionState session_state_{};
   PcmFrameAssembler assembler_{};
   StaticStaleQueue<AudioFrame, UPLINK_QUEUE_DEPTH> uplink_queue_{};
+  Playback playback_{};
   portMUX_TYPE queue_mux_ = portMUX_INITIALIZER_UNLOCKED;
 
   std::atomic<bool> session_requested_{false};
@@ -110,6 +132,10 @@ class RespeakerRealtime : public Component {
   TaskHandle_t transport_task_handle_{nullptr};
   StaticTask_t transport_task_buffer_{};
   std::array<StackType_t, TRANSPORT_TASK_STACK_WORDS> transport_task_stack_{};
+
+  TaskHandle_t playback_task_handle_{nullptr};
+  StaticTask_t playback_task_buffer_{};
+  std::array<StackType_t, PLAYBACK_TASK_STACK_WORDS> playback_task_stack_{};
 };
 
 }  // namespace esphome::respeaker_realtime
