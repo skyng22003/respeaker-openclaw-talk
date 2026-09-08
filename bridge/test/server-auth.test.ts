@@ -134,6 +134,26 @@ describe("authenticated bridge server", () => {
     );
   });
 
+  it("logs only a safe adapter failure code when Talk activation fails", async () => {
+    const log = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const { port } = await startServer({
+      openTalk: vi.fn(async () => {
+        throw new Error("gateway rejected token super-secret-value");
+      }),
+    });
+    const socket = await connect(port);
+
+    const error = nextJson(socket);
+    socket.send(JSON.stringify(hello(9)));
+
+    await expect(error).resolves.toEqual({
+      type: "error", version: 1, generation: 9, code: "talk_unavailable",
+    });
+    await vi.waitFor(() => expect(log).toHaveBeenCalledWith("Talk activation failed", "gateway_adapter_error"));
+    expect(JSON.stringify(log.mock.calls)).not.toContain("super-secret-value");
+    log.mockRestore();
+  });
+
   it("closes the older generation before admitting a newer same-device session", async () => {
     const firstTalk = fakeTalk();
     const secondTalk = fakeTalk();

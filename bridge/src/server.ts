@@ -207,6 +207,9 @@ export function createBridgeServer(deps: BridgeDependencies): Server {
             }),
           });
         } catch {
+          // Keep operational logs useful without ever exposing adapter error
+          // text, which may contain credentials or upstream payload details.
+          console.error("Talk activation failed", "gateway_adapter_error");
           sendControl(socket, {
             type: "error",
             version: 1,
