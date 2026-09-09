@@ -21,7 +21,9 @@ async function startGateway(onRequest: (socket: import("ws").WebSocket, request:
   const wss = new WebSocketServer({ server });
   wss.on("connection", (socket) => {
     socket.on("message", (raw) => onRequest(socket, JSON.parse(raw.toString()) as Record<string, unknown>));
-    setImmediate(() => socket.send(JSON.stringify({ type: "event", event: "connect.challenge", payload: { nonce: "nonce" } })));
+    setImmediate(() => socket.send(JSON.stringify({
+      type: "event", event: "connect.challenge", payload: { nonce: "nonce", ts: Date.now() },
+    })));
   });
   servers.push({ server, wss });
   server.listen(0, "127.0.0.1");
@@ -67,6 +69,7 @@ describe("Gateway Talk adapter", () => {
       maxProtocol: 4,
       client: { id: "gateway-client", mode: "backend" },
     });
+    expect(requests[0]?.params).not.toHaveProperty("nonce");
     expect(requests[1]?.params).toMatchObject({ mode: "realtime", transport: "gateway-relay", brain: "agent-consult", sessionKey: "main" });
     expect(requests[2]?.params).toMatchObject({ sessionId: "relay-1", audioBase64: Buffer.alloc(960, 1).toString("base64") });
     expect(callbacks.clear).toHaveBeenCalledOnce();

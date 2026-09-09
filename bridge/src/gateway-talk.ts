@@ -88,7 +88,6 @@ export async function openGatewayTalk(
 
   const handleEvent = (event: GatewayEvent): void => {
     if (event.event === "connect.challenge") {
-      const payload = isRecord(event.payload) ? event.payload : {};
       const id = `respeaker-${++requestNumber}`;
       socket.send(JSON.stringify({ type: "req", id, method: "connect", params: {
         minProtocol: 4,
@@ -98,7 +97,6 @@ export async function openGatewayTalk(
         auth: { token: config.token },
         role: "operator",
         scopes: ["operator.talk"],
-        nonce: payload.nonce,
       } }));
       const timer = setTimeout(() => {
         pending.delete(id);
