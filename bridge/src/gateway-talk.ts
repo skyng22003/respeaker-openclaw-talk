@@ -1,4 +1,5 @@
 import WebSocket, { type RawData } from "ws";
+import { createPrivateKey, createPublicKey, sign } from "node:crypto";
 
 import type { DeviceHello } from "./protocol.js";
 import type { TalkCallbacks, TalkPort } from "./server.js";
@@ -20,8 +21,14 @@ interface GatewayEvent {
 export interface GatewayTalkConfig {
   url: string;
   token: string;
+  bootstrapToken?: string;
   sessionKey: string;
   requestTimeoutMs?: number;
+  deviceIdentity?: {
+    deviceId: string;
+    publicKeyPem: string;
+    privateKeyPem: string;
+  };
 }
 
 type Pending = { resolve(value: unknown): void; reject(reason: Error): void; timer: NodeJS.Timeout };
@@ -47,6 +54,24 @@ function decodePcm(value: unknown): Buffer | undefined {
   if (typeof value !== "string" || value.length === 0 || value.length % 4 !== 0) return undefined;
   const pcm = Buffer.from(value, "base64");
   return pcm.length > 0 && pcm.length % 2 === 0 ? pcm : undefined;
+}
+
+function buildDeviceProof(config: GatewayTalkConfig, nonce: string, signedAt: number): Record<string, unknown> | undefined {
+  const identity = config.deviceIdentity;
+  if (identity === undefined) return undefined;
+  const scopes = ["operator.talk"];
+  const payload = [
+    "v3", identity.deviceId, "gateway-client", "backend", "operator", scopes.join(","),
+    String(signedAt), config.bootstrapToken ?? config.token, nonce, process.platform.toLowerCase(), "",
+  ].join("|");
+  const publicKeyDer = createPublicKey(identity.publicKeyPem).export({ type: "spki", format: "der" });
+  return {
+    id: identity.deviceId,
+    publicKey: publicKeyDer.subarray(-32).toString("base64url"),
+    signature: sign(null, Buffer.from(payload, "utf8"), createPrivateKey(identity.privateKeyPem)).toString("base64url"),
+    signedAt,
+    nonce,
+  };
 }
 
 export async function openGatewayTalk(
@@ -88,15 +113,27 @@ export async function openGatewayTalk(
 
   const handleEvent = (event: GatewayEvent): void => {
     if (event.event === "connect.challenge") {
+      if (!isRecord(event.payload) || typeof event.payload.nonce !== "string" ||
+          typeof event.payload.ts !== "number" || !Number.isSafeInteger(event.payload.ts)) {
+        callbacks.failure("gateway_protocol_error");
+        rejectConnected?.(new Error("Gateway connect challenge was invalid"));
+        socket.close();
+        return;
+      }
+      const deviceProof = buildDeviceProof(config, event.payload.nonce, event.payload.ts);
       const id = `respeaker-${++requestNumber}`;
       socket.send(JSON.stringify({ type: "req", id, method: "connect", params: {
         minProtocol: 4,
         maxProtocol: 4,
         client: { id: "gateway-client", version: "0.1.0", platform: process.platform, mode: "backend" },
         caps: [],
-        auth: { token: config.token },
+        auth: config.deviceIdentity === undefined ? { token: config.token } : {
+          ...(config.bootstrapToken === undefined ? {} : { token: config.bootstrapToken }),
+          deviceToken: config.token,
+        },
         role: "operator",
         scopes: ["operator.talk"],
+        ...(deviceProof === undefined ? {} : { device: deviceProof }),
       } }));
       const timer = setTimeout(() => {
         pending.delete(id);

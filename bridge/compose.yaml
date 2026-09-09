@@ -5,6 +5,9 @@ services:
     restart: unless-stopped
     env_file:
       - /etc/respeaker-talk-bridge/env
+    volumes:
+      - /etc/respeaker-talk-bridge/gateway-device-public.pem:/run/secrets/gateway-device-public.pem:ro
+      - /etc/respeaker-talk-bridge/gateway-device-private.pem:/run/secrets/gateway-device-private.pem:ro
     ports:
       # Replace the host address with the private LAN address after firewall review.
       - "127.0.0.1:8787:8787/tcp"

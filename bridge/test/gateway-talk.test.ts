@@ -1,4 +1,5 @@
 import { once } from "node:events";
+import { generateKeyPairSync } from "node:crypto";
 import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
 
@@ -16,13 +17,16 @@ const device: DeviceHello = {
   idleTimeoutSeconds: 30, firmware: "test",
 };
 
-async function startGateway(onRequest: (socket: import("ws").WebSocket, request: Record<string, unknown>) => void) {
+async function startGateway(
+  onRequest: (socket: import("ws").WebSocket, request: Record<string, unknown>) => void,
+  challenge: { nonce: string; ts: number } = { nonce: "nonce", ts: Date.now() },
+) {
   const server = createServer();
   const wss = new WebSocketServer({ server });
   wss.on("connection", (socket) => {
     socket.on("message", (raw) => onRequest(socket, JSON.parse(raw.toString()) as Record<string, unknown>));
     setImmediate(() => socket.send(JSON.stringify({
-      type: "event", event: "connect.challenge", payload: { nonce: "nonce", ts: Date.now() },
+      type: "event", event: "connect.challenge", payload: challenge,
     })));
   });
   servers.push({ server, wss });
@@ -44,6 +48,37 @@ afterEach(async () => {
 });
 
 describe("Gateway Talk adapter", () => {
+  it("signs the Gateway challenge as the paired backend device", async () => {
+    const { publicKey, privateKey } = generateKeyPairSync("ed25519");
+    const publicKeyPem = publicKey.export({ type: "spki", format: "pem" });
+    const privateKeyPem = privateKey.export({ type: "pkcs8", format: "pem" });
+    const requests: Record<string, unknown>[] = [];
+    const challengeTs = 1_789_000_000_000;
+    const url = await startGateway((socket, request) => {
+      requests.push(request);
+      if (request.method === "connect") return response(socket, request);
+      if (request.method === "talk.session.create") return response(socket, request, { sessionId: "relay-1" });
+      if (request.method === "talk.session.close") return response(socket, request);
+    }, { nonce: "challenge-nonce", ts: challengeTs });
+    const callbacks = { audio: vi.fn(), clear: vi.fn(), activity: vi.fn(), failure: vi.fn() };
+    const talk = await openGatewayTalk({
+      url,
+      token: "device-token",
+      bootstrapToken: "bootstrap-token",
+      sessionKey: "main",
+      deviceIdentity: { deviceId: "device-id", publicKeyPem, privateKeyPem },
+    }, device, callbacks);
+
+    const connect = requests[0]?.params as Record<string, unknown>;
+    expect(connect.auth).toEqual({ token: "bootstrap-token", deviceToken: "device-token" });
+    expect(connect.device).toMatchObject({ id: "device-id", signedAt: challengeTs, nonce: "challenge-nonce" });
+    expect((connect.device as Record<string, unknown>).publicKey).toBe(
+      publicKey.export({ type: "spki", format: "der" }).subarray(-32).toString("base64url"),
+    );
+    expect(typeof (connect.device as Record<string, unknown>).signature).toBe("string");
+    await talk.close();
+  });
+
   it("authenticates, creates Talk, relays audio, cancels, and closes", async () => {
     const requests: Record<string, unknown>[] = [];
     const url = await startGateway((socket, request) => {
