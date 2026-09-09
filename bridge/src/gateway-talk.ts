@@ -93,7 +93,7 @@ export async function openGatewayTalk(
       socket.send(JSON.stringify({ type: "req", id, method: "connect", params: {
         minProtocol: 4,
         maxProtocol: 4,
-        client: { id: "respeaker-talk-bridge", version: "0.1.0", platform: process.platform, mode: "backend" },
+        client: { id: "gateway-client", version: "0.1.0", platform: process.platform, mode: "backend" },
         caps: [],
         auth: { token: config.token },
         role: "operator",

@@ -61,7 +61,12 @@ describe("Gateway Talk adapter", () => {
     expect(requests.map((request) => request.method)).toEqual([
       "connect", "talk.session.create", "talk.session.appendAudio", "talk.session.cancelOutput", "talk.session.close",
     ]);
-    expect(requests[0]?.params).toMatchObject({ auth: { token: "gateway-token" }, minProtocol: 4, maxProtocol: 4 });
+    expect(requests[0]?.params).toMatchObject({
+      auth: { token: "gateway-token" },
+      minProtocol: 4,
+      maxProtocol: 4,
+      client: { id: "gateway-client", mode: "backend" },
+    });
     expect(requests[1]?.params).toMatchObject({ mode: "realtime", transport: "gateway-relay", brain: "agent-consult", sessionKey: "main" });
     expect(requests[2]?.params).toMatchObject({ sessionId: "relay-1", audioBase64: Buffer.alloc(960, 1).toString("base64") });
     expect(callbacks.clear).toHaveBeenCalledOnce();
