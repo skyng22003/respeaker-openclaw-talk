@@ -20,7 +20,7 @@ substitutions:
 respeaker_realtime:
   id: realtime_client
   microphone: i2s_mics
-  speaker: announcement_resampling_speaker
+  speaker: realtime_resampling_speaker
   device_id: ${name}
   idle_timeout: 30s
   input_channel: 0

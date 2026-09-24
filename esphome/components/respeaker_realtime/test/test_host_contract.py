@@ -7,6 +7,7 @@ invariants in the source; they are not a substitute for compiling that test.
 """
 
 from pathlib import Path
+import re
 import struct
 import unittest
 
@@ -18,6 +19,7 @@ SCHEMA = (ROOT / "__init__.py").read_text()
 PACKAGE = (ROOT.parents[2] / "packages" / "realtime-talk.yaml").read_text()
 VOICE_ASSISTANT = (ROOT.parents[2] / "packages" / "voice-assistant.yaml").read_text()
 REALTIME_CONFIG = (ROOT.parents[2] / "config" / "respeaker-xvf-realtime-example.yaml").read_text()
+HARDWARE = (ROOT.parents[2] / "packages" / "hardware.yaml").read_text()
 
 
 def reference_convert(raw: bytes, channel: int = 0, phase: int = 0):
@@ -202,6 +204,22 @@ class WakeRoutingContract(unittest.TestCase):
     def test_realtime_package_defines_session_script(self):
         self.assertIn("id: start_realtime_session", PACKAGE)
         self.assertIn("id(realtime_client).start_session(wake_word);", PACKAGE)
+
+    def test_realtime_playback_has_its_own_mixer_input(self):
+        # A wake sound reconfigures the announcement resampler to its 48 kHz
+        # source format. Realtime PCM is 24 kHz, so the two paths cannot share
+        # the same resampler even after the announcement finishes.
+        realtime_speaker = re.search(r"(?m)^  speaker: (\S+)$", PACKAGE)
+        announcement_speaker = re.search(r"(?m)^      speaker: (\S+)$", VOICE_ASSISTANT)
+        self.assertIsNotNone(realtime_speaker)
+        self.assertIsNotNone(announcement_speaker)
+        self.assertNotEqual(realtime_speaker.group(1), announcement_speaker.group(1))
+        self.assertRegex(
+            HARDWARE,
+            rf"(?m)^  - platform: resampler\n    id: {re.escape(realtime_speaker.group(1))}\n"
+            r"    output_speaker: realtime_mixing_input$",
+        )
+        self.assertRegex(HARDWARE, r"(?m)^      - id: realtime_mixing_input$")
 
     def test_realtime_config_overrides_the_hook(self):
         self.assertIn("wake_session_script_id: start_realtime_session", REALTIME_CONFIG)
