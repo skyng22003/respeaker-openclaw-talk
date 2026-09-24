@@ -127,6 +127,7 @@ class SourceContracts(unittest.TestCase):
         self.assertIn("value.total_seconds < 5 or value.total_seconds > 300", SCHEMA)
         self.assertIn("cv.int_range(min=0, max=1)", SCHEMA)
         self.assertIn('add_idf_component(name="espressif/esp_websocket_client", ref="1.6.1")', SCHEMA)
+        self.assertIn('include_builtin_idf_component("json")', SCHEMA)
 
     def test_playback_never_runs_on_the_transport_callback(self):
         callback = SOURCE[SOURCE.index("void RespeakerRealtime::handle_playback_frame_") :]
