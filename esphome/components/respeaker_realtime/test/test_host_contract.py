@@ -211,9 +211,11 @@ class WakeRoutingContract(unittest.TestCase):
             REALTIME_CONFIG.count("url: https://github.com/skyng22003/respeaker-openclaw-talk"),
             2,
         )
-        self.assertNotIn(
-            "url: https://github.com/formatBCE/Respeaker-XVF3800-ESPHome-integration",
-            REALTIME_CONFIG,
+        self.assertEqual(
+            REALTIME_CONFIG.count(
+                "url: https://github.com/formatBCE/Respeaker-XVF3800-ESPHome-integration"
+            ),
+            1,
         )
         self.assertGreaterEqual(REALTIME_CONFIG.count("ref: ${realtime_ref}"), 2)
         self.assertIn(
