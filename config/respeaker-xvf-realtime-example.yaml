@@ -12,6 +12,7 @@ substitutions:
   name: respeaker-xvf3800-realtime
   friendly_name: reSpeaker XVF3800 Realtime Prototype
   respeaker_ref: main
+  respeaker_components: "[respeaker_xvf3800, aic3104]"
   realtime_ref: feat/realtime-wake-routing
   # Override the shared package default (start_voice_session) so an ordinary
   # wake word starts the realtime session. Main-config substitutions take

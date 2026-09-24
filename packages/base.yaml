@@ -17,6 +17,9 @@ substitutions:
   # Ref of this repository. It selects the C++ components and the DFU firmware.
   # Set it to the same tag or commit that you use for the packages themselves.
   respeaker_ref: main
+  # Components loaded from the board integration repository. Realtime configs
+  # omit the fork-only component here and load it from their project ref.
+  respeaker_components: "[respeaker_xvf3800, respeaker_realtime, aic3104]"
   # Ref of the patched i2s_audio fork. The stock component does not work.
   i2s_audio_ref: respeaker_microphone
 
@@ -201,9 +204,7 @@ external_components:
       url: https://github.com/formatBCE/Respeaker-XVF3800-ESPHome-integration
       ref: ${respeaker_ref}
     components:
-      - respeaker_xvf3800
-      - respeaker_realtime
-      - aic3104
+      ${respeaker_components}
     refresh: 0s
 
 select:
