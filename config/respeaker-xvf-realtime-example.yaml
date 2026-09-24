@@ -42,17 +42,6 @@ packages:
 # The package set and realtime component use one project ref so their IDs and
 # wake-routing contract are compiled together.
 external_components:
-  # Drop the board package's combined component source. It includes the
-  # project-only realtime component, which does not exist on upstream main.
-  - !remove
-  - source:
-      type: git
-      url: https://github.com/formatBCE/Respeaker-XVF3800-ESPHome-integration
-      ref: ${respeaker_ref}
-    components:
-      - respeaker_xvf3800
-      - aic3104
-    refresh: 0s
   - source:
       type: git
       url: https://github.com/skyng22003/respeaker-openclaw-talk

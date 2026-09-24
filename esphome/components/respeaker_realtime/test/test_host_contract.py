@@ -211,19 +211,19 @@ class WakeRoutingContract(unittest.TestCase):
             REALTIME_CONFIG.count("url: https://github.com/skyng22003/respeaker-openclaw-talk"),
             2,
         )
-        self.assertEqual(
-            REALTIME_CONFIG.count(
-                "url: https://github.com/formatBCE/Respeaker-XVF3800-ESPHome-integration"
-            ),
-            1,
+        self.assertNotIn(
+            "url: https://github.com/formatBCE/Respeaker-XVF3800-ESPHome-integration",
+            REALTIME_CONFIG,
         )
         self.assertGreaterEqual(REALTIME_CONFIG.count("ref: ${realtime_ref}"), 2)
         self.assertIn(
             "url: https://github.com/formatBCE/Respeaker-XVF3800-ESPHome-integration",
             (ROOT.parents[2] / "packages" / "base.yaml").read_text(),
         )
-        self.assertIn("  - !remove\n", REALTIME_CONFIG)
-        self.assertIn("- respeaker_xvf3800\n      - aic3104", REALTIME_CONFIG)
+        base_package = (ROOT.parents[2] / "packages" / "base.yaml").read_text()
+        upstream_components = base_package[base_package.index("external_components:") :]
+        upstream_components = upstream_components[: upstream_components.index("\nselect:")]
+        self.assertNotIn("- respeaker_realtime", upstream_components)
 
     def test_priority_branches_are_preserved(self):
         for marker in (
