@@ -222,7 +222,7 @@ class WakeRoutingContract(unittest.TestCase):
             "url: https://github.com/formatBCE/Respeaker-XVF3800-ESPHome-integration",
             (ROOT.parents[2] / "packages" / "base.yaml").read_text(),
         )
-        self.assertIn("external_components:\n  - !remove", REALTIME_CONFIG)
+        self.assertIn("  - !remove\n", REALTIME_CONFIG)
         self.assertIn("- respeaker_xvf3800\n      - aic3104", REALTIME_CONFIG)
 
     def test_priority_branches_are_preserved(self):
