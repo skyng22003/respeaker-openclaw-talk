@@ -12,7 +12,6 @@ substitutions:
   name: respeaker-xvf3800-realtime
   friendly_name: reSpeaker XVF3800 Realtime Prototype
   respeaker_ref: main
-  respeaker_components: "[respeaker_xvf3800, aic3104]"
   realtime_ref: feat/realtime-wake-routing
   # Override the shared package default (start_voice_session) so an ordinary
   # wake word starts the realtime session. Main-config substitutions take
@@ -43,6 +42,17 @@ packages:
 # The package set and realtime component use one project ref so their IDs and
 # wake-routing contract are compiled together.
 external_components:
+  # Drop the board package's combined component source. It includes the
+  # project-only realtime component, which does not exist on upstream main.
+  - !remove
+  - source:
+      type: git
+      url: https://github.com/formatBCE/Respeaker-XVF3800-ESPHome-integration
+      ref: ${respeaker_ref}
+    components:
+      - respeaker_xvf3800
+      - aic3104
+    refresh: 0s
   - source:
       type: git
       url: https://github.com/skyng22003/respeaker-openclaw-talk
