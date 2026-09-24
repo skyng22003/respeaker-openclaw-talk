@@ -3,7 +3,11 @@ import re
 import esphome.codegen as cg
 import esphome.config_validation as cv
 from esphome.components import microphone, speaker
-from esphome.components.esp32 import add_idf_component, add_idf_sdkconfig_option
+from esphome.components.esp32 import (
+    add_idf_component,
+    add_idf_sdkconfig_option,
+    include_builtin_idf_component,
+)
 from esphome.const import CONF_ID, CONF_MICROPHONE, CONF_SPEAKER
 
 CODEOWNERS = ["@formatBCE"]
@@ -81,4 +85,7 @@ async def to_code(config):
     # ESP-IDF WebSocket client is an Espressif managed component. Pin it so the
     # generated firmware dependency graph is reproducible.
     add_idf_component(name="espressif/esp_websocket_client", ref="1.6.1")
+    # cJSON is provided by ESP-IDF's built-in json component, which ESPHome
+    # excludes by default unless a component explicitly requests it.
+    include_builtin_idf_component("json")
     add_idf_sdkconfig_option("CONFIG_MBEDTLS_CERTIFICATE_BUNDLE", True)

@@ -57,7 +57,7 @@ speaker:
     buffer_duration: 100ms
     audio_dac: aic3104_dac
 
-  # Virtual speakers to combine the announcement and media streams together into one output
+  # Virtual speakers to combine announcement, media, and realtime streams.
   - platform: mixer
     id: mixing_speaker
     output_speaker: i2s_audio_speaker
@@ -67,6 +67,8 @@ speaker:
       - id: announcement_mixing_input
         timeout: never
       - id: media_mixing_input
+        timeout: never
+      - id: realtime_mixing_input
         timeout: never
 
   # Virtual speakers to resample each pipelines' audio, if necessary, as the mixer speaker requires the same sample rate
@@ -78,6 +80,13 @@ speaker:
   - platform: resampler
     id: media_resampling_speaker
     output_speaker: media_mixing_input
+    sample_rate: 48000
+    bits_per_sample: 16
+  # Realtime PCM is 24 kHz. Keep its resampler separate from announcements:
+  # the wake sound changes the announcement speaker's input stream format.
+  - platform: resampler
+    id: realtime_resampling_speaker
+    output_speaker: realtime_mixing_input
     sample_rate: 48000
     bits_per_sample: 16
 
