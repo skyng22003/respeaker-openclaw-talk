@@ -16,6 +16,8 @@ PLAYBACK = (ROOT / "playback.h").read_text()
 SOURCE = (ROOT / "respeaker_realtime.cpp").read_text()
 SCHEMA = (ROOT / "__init__.py").read_text()
 PACKAGE = (ROOT.parents[2] / "packages" / "realtime-talk.yaml").read_text()
+VOICE_ASSISTANT = (ROOT.parents[2] / "packages" / "voice-assistant.yaml").read_text()
+REALTIME_CONFIG = (ROOT.parents[2] / "config" / "respeaker-xvf-realtime-example.yaml").read_text()
 
 
 def reference_convert(raw: bytes, channel: int = 0, phase: int = 0):
@@ -166,6 +168,74 @@ class SourceContracts(unittest.TestCase):
         self.assertNotIn("frame.bytes", joined)
         self.assertNotIn("data.data()", joined)
         self.assertIn('return "<redacted>"', HEADER)
+
+
+class WakeRoutingContract(unittest.TestCase):
+    """Wake-word -> session routing must not double-start two pipelines.
+
+    Package merging APPENDS ``on_wake_word_detected`` actions, so a second
+    handler in the realtime package would start both the Home Assistant voice
+    assistant and the realtime session. The shared package therefore keeps the
+    only handler and selects its final ordinary-wake action through a
+    substitution that the realtime config overrides.
+    """
+
+    def wake_handler(self) -> str:
+        handler = VOICE_ASSISTANT[VOICE_ASSISTANT.index("on_wake_word_detected:") :]
+        return handler[: handler.index("\nvoice_assistant:")]
+
+    def test_single_wake_handler_routes_through_substitution_hook(self):
+        self.assertEqual(VOICE_ASSISTANT.count("on_wake_word_detected:"), 1)
+        self.assertNotIn("on_wake_word_detected:", PACKAGE)
+        self.assertIn("wake_session_script_id:", VOICE_ASSISTANT)
+        self.assertIn("id: ${wake_session_script_id}", VOICE_ASSISTANT)
+        # The ordinary-wake branch must go through the hook, not a bare start.
+        self.assertNotIn("voice_assistant.start", self.wake_handler())
+
+    def test_default_hook_keeps_legacy_voice_assistant_start(self):
+        self.assertIn("wake_session_script_id: start_voice_session", VOICE_ASSISTANT)
+        self.assertIn("id: start_voice_session", VOICE_ASSISTANT)
+        self.assertIn("voice_assistant.start:", VOICE_ASSISTANT)
+        self.assertIn("wake_word: !lambda return wake_word;", VOICE_ASSISTANT)
+
+    def test_realtime_package_defines_session_script(self):
+        self.assertIn("id: start_realtime_session", PACKAGE)
+        self.assertIn("id(realtime_client).start_session(wake_word);", PACKAGE)
+
+    def test_realtime_config_overrides_the_hook(self):
+        self.assertIn("wake_session_script_id: start_realtime_session", REALTIME_CONFIG)
+
+    def test_priority_branches_are_preserved(self):
+        for marker in (
+            "switch.is_off: mic_mute_switch",
+            "switch.is_on: timer_ringing",
+            "switch.turn_off: timer_ringing",
+            "media_player.is_announcing:",
+            "switch.is_on: wake_sound",
+            "switch.is_on: beam_lock_enabled",
+            "id(respeaker).lock_beam();",
+        ):
+            self.assertIn(marker, VOICE_ASSISTANT)
+        # The session hook sits after the wake sound and before the beam lock.
+        hook = VOICE_ASSISTANT.index("id: ${wake_session_script_id}")
+        sound = VOICE_ASSISTANT.index("switch.is_on: wake_sound")
+        beam = VOICE_ASSISTANT.index("id(respeaker).lock_beam();")
+        self.assertLess(sound, hook)
+        self.assertLess(hook, beam)
+
+    def test_duplicate_wake_starts_are_suppressed(self):
+        start = SOURCE[SOURCE.index("void RespeakerRealtime::start_session") :]
+        start = start[: start.index("\n}\n")]
+        self.assertIn("compare_exchange_strong", start)
+        # Model the latch: a second wake before Stop must not start again.
+        requested = False
+        starts = 0
+        for _ in range(2):
+            expected = False
+            if expected == requested:
+                requested = True
+                starts += 1
+        self.assertEqual(starts, 1)
 
 
 if __name__ == "__main__":

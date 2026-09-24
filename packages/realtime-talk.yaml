@@ -1,11 +1,21 @@
 # =============================================================================
 # Opt-in OpenClaw realtime microphone uplink.
 #
-# Include this package only in a realtime prototype configuration. The existing
-# voice-assistant package remains unchanged and continues to be the default.
+# Include this package only in a realtime prototype configuration. The shared
+# voice-assistant package keeps its legacy wake behavior by default; this
+# package supplies the alternate ordinary-wake action that the realtime
+# configuration selects through ${wake_session_script_id}. All priority
+# branches (mute, ringing timer, announcement, wake sound, beam lock) stay in
+# the shared package and are untouched.
 # bridge_url and credential are intentionally supplied by the local top-level
 # configuration so no credential is present in a remote package.
 # =============================================================================
+
+substitutions:
+  # Route an ordinary wake word into the realtime session instead of the Home
+  # Assistant voice pipeline. The main realtime configuration also sets this,
+  # so it wins over the voice-assistant package default regardless of merge order.
+  wake_session_script_id: start_realtime_session
 
 respeaker_realtime:
   id: realtime_client
@@ -14,6 +24,16 @@ respeaker_realtime:
   device_id: ${name}
   idle_timeout: 30s
   input_channel: 0
+
+# Ordinary-wake routing: start a realtime session with the detected wake word.
+# start_session() is idempotent (compare-exchange), so a duplicate wake event
+# before Stop is suppressed. Manual Start/Stop buttons remain available below.
+script:
+  - id: start_realtime_session
+    parameters:
+      wake_word: string
+    then:
+      - lambda: id(realtime_client).start_session(wake_word);
 
 # Temporary manual controls for validating the end-to-end transport before
 # wake/Stop lifecycle integration is added.

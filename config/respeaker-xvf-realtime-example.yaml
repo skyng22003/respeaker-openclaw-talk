@@ -1,9 +1,11 @@
 # =============================================================================
 # reSpeaker XVF3800 OpenClaw realtime uplink — software prototype.
 #
-# This configuration is additive: the existing voice-assistant behavior remains
-# present until Task 6 explicitly moves wake/Stop lifecycle to realtime mode.
-# Building this file does not authorize uploading it to hardware.
+# This configuration is additive: the priority wake branches (mute, ringing
+# timer, announcement, wake sound, beam lock) still come from the shared
+# voice-assistant package. Only the final ordinary-wake action is rerouted, by
+# overriding ${wake_session_script_id} to start a realtime session. Building
+# this file does not authorize uploading it to hardware.
 # =============================================================================
 
 substitutions:
@@ -11,6 +13,10 @@ substitutions:
   friendly_name: reSpeaker XVF3800 Realtime Prototype
   respeaker_ref: main
   realtime_ref: feature/realtime-talk-bridge
+  # Override the shared package default (start_voice_session) so an ordinary
+  # wake word starts the realtime session. Main-config substitutions take
+  # precedence over package substitutions.
+  wake_session_script_id: start_realtime_session
 
 packages:
   respeaker:

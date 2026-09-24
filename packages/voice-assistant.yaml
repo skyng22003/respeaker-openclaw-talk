@@ -22,6 +22,14 @@ substitutions:
   factory_reset_confirmed_sound_file: https://github.com/esphome/home-assistant-voice-pe/raw/dev/sounds/factory_reset_confirmed.mp3
   error_cloud_expired_sound_file: https://github.com/esphome/home-assistant-voice-pe/raw/dev/sounds/error_cloud_expired.mp3
 
+  # Script executed for an ordinary (non-priority) wake word. The default keeps
+  # the legacy Home Assistant voice pipeline. A realtime configuration overrides
+  # this to a script that starts a realtime session instead. The shared package
+  # keeps the only micro_wake_word handler: package merging APPENDS
+  # on_wake_word_detected actions, so a second handler would start both
+  # pipelines at once.
+  wake_session_script_id: start_voice_session
+
 switch:
   # Mute Sound Switch.
   - platform: template
@@ -230,7 +238,11 @@ micro_wake_word:
                                       priority: true
                                       sound_file: "wake_word_triggered_sound"
                                   - delay: 300ms
-                            - voice_assistant.start:
+                            # Ordinary-wake session start. Selected by
+                            # ${wake_session_script_id}: the legacy HA pipeline
+                            # by default, the realtime session in realtime configs.
+                            - script.execute:
+                                id: ${wake_session_script_id}
                                 wake_word: !lambda return wake_word;
                             # Pin the AEC beam to the wake-word direction before any
                             # other sound source can steal it. Gated by the user-facing
@@ -405,6 +417,16 @@ voice_assistant:
         }
 
 script:
+  # Default ordinary-wake action (selected by ${wake_session_script_id}).
+  # Keeping it a script lets a realtime config reroute the wake without adding a
+  # second on_wake_word_detected handler, which package merging would append.
+  - id: start_voice_session
+    parameters:
+      wake_word: string
+    then:
+      - voice_assistant.start:
+          wake_word: !lambda return wake_word;
+
   # Script executed when we want to play sounds on the device.
   - id: play_sound
     parameters:
