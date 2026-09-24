@@ -205,6 +205,17 @@ class WakeRoutingContract(unittest.TestCase):
     def test_realtime_config_overrides_the_hook(self):
         self.assertIn("wake_session_script_id: start_realtime_session", REALTIME_CONFIG)
 
+    def test_realtime_config_sources_shared_hook_and_component_from_same_ref(self):
+        self.assertEqual(
+            REALTIME_CONFIG.count("url: https://github.com/skyng22003/respeaker-openclaw-talk"),
+            3,
+        )
+        self.assertNotIn(
+            "url: https://github.com/formatBCE/Respeaker-XVF3800-ESPHome-integration",
+            REALTIME_CONFIG,
+        )
+        self.assertGreaterEqual(REALTIME_CONFIG.count("ref: ${realtime_ref}"), 3)
+
     def test_priority_branches_are_preserved(self):
         for marker in (
             "switch.is_off: mic_mute_switch",

@@ -20,9 +20,12 @@ substitutions:
 
 packages:
   respeaker:
-    url: https://github.com/formatBCE/Respeaker-XVF3800-ESPHome-integration
-    ref: ${respeaker_ref}
-    refresh: 1d
+    # The realtime branch carries the shared wake-routing hook as well as the
+    # realtime package. Keep every package on the same ref so the hook cannot
+    # be silently replaced by the upstream voice-assistant package.
+    url: https://github.com/skyng22003/respeaker-openclaw-talk
+    ref: ${realtime_ref}
+    refresh: 0s
     files:
       - packages/base.yaml
       - packages/hardware.yaml
@@ -36,8 +39,8 @@ packages:
     files:
       - packages/realtime-talk.yaml
 
-# The existing hardware components remain sourced from upstream main. Only the
-# opt-in realtime component comes from the project branch.
+# The package set and realtime component use one project ref so their IDs and
+# wake-routing contract are compiled together.
 external_components:
   - source:
       type: git
