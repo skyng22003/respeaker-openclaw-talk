@@ -204,6 +204,7 @@ class WakeRoutingContract(unittest.TestCase):
 
     def test_realtime_config_overrides_the_hook(self):
         self.assertIn("wake_session_script_id: start_realtime_session", REALTIME_CONFIG)
+        self.assertIn("realtime_ref: feat/realtime-wake-routing", REALTIME_CONFIG)
 
     def test_realtime_config_sources_shared_hook_and_component_from_same_ref(self):
         self.assertGreaterEqual(
