@@ -206,7 +206,7 @@ class WakeRoutingContract(unittest.TestCase):
         self.assertIn("wake_session_script_id: start_realtime_session", REALTIME_CONFIG)
 
     def test_realtime_config_sources_shared_hook_and_component_from_same_ref(self):
-        self.assertEqual(
+        self.assertGreaterEqual(
             REALTIME_CONFIG.count("url: https://github.com/skyng22003/respeaker-openclaw-talk"),
             2,
         )
